@@ -141,10 +141,22 @@
             z-index: 20;
             display: none;
         }
+        
+        #video-feed {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: -1;
+            display: none;
+        }
     </style>
 </head>
 <body>
     <div id="ar-container"></div>
+    <video id="video-feed" autoplay playsinline></video>
     <div id="reticle"></div>
     <div id="plane-marker"></div>
     <div id="hint">Move your device to detect surfaces</div>
@@ -202,6 +214,8 @@
         let trackingStartTime = 0;
         let trackingTimeout = null;
         let usingWebXR = false;
+        let videoElement = document.getElementById('video-feed');
+        let currentStream = null;
 
         // Initialize the app
         document.addEventListener('DOMContentLoaded', init);
@@ -235,7 +249,7 @@
                         document.getElementById('permission-button').addEventListener('click', requestCameraPermission);
                         document.getElementById('progress').textContent = 'Camera permission required';
                     } else {
-                        showUnsupported("Error initializing AR");
+                        showUnsupported("Error initializing AR: " + error);
                     }
                 });
         }
@@ -248,53 +262,78 @@
                     return;
                 }
 
-                // Check for video input devices
-                navigator.mediaDevices.enumerateDevices()
-                    .then(devices => {
-                        const hasVideoInput = devices.some(device => device.kind === 'videoinput');
-                        if (!hasVideoInput) {
-                            reject('no-video-input');
-                            return;
-                        }
+                // Try to get user media to test permissions
+                navigator.mediaDevices.getUserMedia({ 
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                })
+                .then(stream => {
+                    // Store the stream for later use
+                    currentStream = stream;
+                    
+                    // Show video feed for debugging
+                    videoElement.srcObject = stream;
+                    videoElement.style.display = 'block';
+                    
+                    // Stop the stream immediately (we just needed permission)
+                    setTimeout(() => {
+                        stopStream(stream);
+                        resolve();
+                    }, 100);
+                })
+                .catch(err => {
+                    console.error("Camera access error:", err);
+                    if (err.name === 'NotAllowedError') {
+                        reject('camera-permission-denied');
+                    } else {
+                        reject('camera-access-failed');
+                    }
+                });
+            });
+        }
 
-                        // Try to get user media to test permissions
-                        navigator.mediaDevices.getUserMedia({ video: true })
-                            .then(stream => {
-                                // Stop all tracks
-                                stream.getTracks().forEach(track => track.stop());
-                                resolve();
-                            })
-                            .catch(err => {
-                                console.error("Camera access error:", err);
-                                reject('camera-permission-denied');
-                            });
-                    })
-                    .catch(err => {
-                        console.error("Device enumeration error:", err);
-                        reject('device-enumeration-failed');
-                    });
+        function stopStream(stream) {
+            if (!stream) return;
+            stream.getTracks().forEach(track => {
+                track.stop();
             });
         }
 
         function requestCameraPermission() {
             document.getElementById('progress').textContent = 'Requesting camera access...';
             
-            navigator.mediaDevices.getUserMedia({ video: true })
-                .then(stream => {
-                    // Stop all tracks (we just needed permission)
-                    stream.getTracks().forEach(track => track.stop());
-                    
-                    cameraPermissionGranted = true;
-                    document.getElementById('permission-button').style.display = 'none';
-                    document.getElementById('progress').textContent = 'Camera access granted';
-                    
-                    // Restart initialization
-                    setTimeout(init, 500);
-                })
-                .catch(err => {
-                    console.error("Camera permission denied:", err);
-                    document.getElementById('progress').textContent = 'Camera access denied. Please allow camera access in your browser settings.';
-                });
+            navigator.mediaDevices.getUserMedia({ 
+                video: {
+                    facingMode: 'environment',
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            })
+            .then(stream => {
+                // Store the stream
+                currentStream = stream;
+                
+                // Show video feed
+                videoElement.srcObject = stream;
+                videoElement.style.display = 'block';
+                
+                cameraPermissionGranted = true;
+                document.getElementById('permission-button').style.display = 'none';
+                document.getElementById('progress').textContent = 'Camera access granted';
+                
+                // Restart initialization
+                setTimeout(() => {
+                    stopStream(stream);
+                    init();
+                }, 500);
+            })
+            .catch(err => {
+                console.error("Camera permission denied:", err);
+                document.getElementById('progress').textContent = 'Camera access denied. Please allow camera access in your browser settings.';
+            });
         }
 
         function setupScene() {
@@ -556,49 +595,71 @@
         }
 
         function setupARjs() {
-            // AR.js implementation
-            arjsSource = new THREEx.ArToolkitSource({
-                sourceType: config.arjs.sourceType,
-                sourceWidth: config.arjs.canvasWidth,
-                sourceHeight: config.arjs.canvasHeight,
-                displayWidth: window.innerWidth,
-                displayHeight: window.innerHeight
-            });
-            
-            arjsContext = new THREEx.ArToolkitContext({
-                cameraParametersUrl: config.arjs.cameraParametersUrl,
-                detectionMode: config.arjs.detectionMode,
-                maxDetectionRate: config.arjs.maxDetectionRate,
-                canvasWidth: config.arjs.canvasWidth,
-                canvasHeight: config.arjs.canvasHeight
-            });
-            
-            // Initialize AR.js
-            arjsSource.init(() => {
-                arjsSource.onResize(renderer.domElement);
+            // First get camera stream
+            navigator.mediaDevices.getUserMedia({ 
+                video: {
+                    facingMode: 'environment',
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            })
+            .then(stream => {
+                currentStream = stream;
+                videoElement.srcObject = stream;
+                videoElement.style.display = 'block';
                 
-                arjsContext.init(() => {
-                    camera.projectionMatrix.copy(arjsContext.getProjectionMatrix());
-                    
-                    // Load model
-                    loadModel().then(() => {
-                        // Start update loop
-                        updateARjs();
-                    });
+                // AR.js implementation
+                arjsSource = new THREEx.ArToolkitSource({
+                    sourceType: 'video',
+                    sourceWidth: stream.getVideoTracks()[0].getSettings().width || config.arjs.canvasWidth,
+                    sourceHeight: stream.getVideoTracks()[0].getSettings().height || config.arjs.canvasHeight,
+                    displayWidth: window.innerWidth,
+                    displayHeight: window.innerHeight
                 });
-            }, (error) => {
-                console.error("AR.js initialization failed:", error);
-                showUnsupported("Camera access denied or not available");
+                
+                // Use the existing video element
+                arjsSource.domElement = videoElement;
+                
+                arjsContext = new THREEx.ArToolkitContext({
+                    cameraParametersUrl: config.arjs.cameraParametersUrl,
+                    detectionMode: config.arjs.detectionMode,
+                    maxDetectionRate: config.arjs.maxDetectionRate,
+                    canvasWidth: config.arjs.canvasWidth,
+                    canvasHeight: config.arjs.canvasHeight
+                });
+                
+                // Initialize AR.js
+                arjsSource.init(() => {
+                    arjsSource.onResize(renderer.domElement);
+                    
+                    arjsContext.init(() => {
+                        camera.projectionMatrix.copy(arjsContext.getProjectionMatrix());
+                        
+                        // Load model
+                        loadModel().then(() => {
+                            // Start update loop
+                            updateARjs();
+                        });
+                    });
+                }, (error) => {
+                    console.error("AR.js initialization failed:", error);
+                    showUnsupported("AR initialization failed");
+                    endARSession();
+                });
+                
+                // Add click/tap event for model placement
+                window.addEventListener('click', placeModelARjs);
+                window.addEventListener('touchstart', placeModelARjs);
+            })
+            .catch(error => {
+                console.error("Failed to get camera stream:", error);
+                showUnsupported("Failed to access camera");
                 endARSession();
             });
-            
-            // Add click/tap event for model placement
-            window.addEventListener('click', placeModelARjs);
-            window.addEventListener('touchstart', placeModelARjs);
         }
 
         function updateARjs() {
-            if (arjsSource.ready) {
+            if (arjsSource && arjsSource.ready && arjsContext) {
                 arjsContext.update(arjsSource.domElement);
                 
                 // Update camera projection matrix
@@ -744,7 +805,9 @@
             
             if (arjsSource && arjsSource.onResize) {
                 arjsSource.onResize(renderer.domElement);
-                arjsContext.arController.setProjectionMatrix();
+                if (arjsContext && arjsContext.arController) {
+                    arjsContext.arController.setProjectionMatrix();
+                }
             }
         }
 
@@ -753,14 +816,14 @@
                 renderer.setAnimationLoop(null);
             }
             
-            if (arjsSource) {
-                // Stop AR.js camera stream
-                if (arjsSource.domElement.srcObject) {
-                    const stream = arjsSource.domElement.srcObject;
-                    const tracks = stream.getTracks();
-                    tracks.forEach(track => track.stop());
-                }
+            // Stop any camera streams
+            if (currentStream) {
+                stopStream(currentStream);
+                currentStream = null;
             }
+            
+            // Hide video feed
+            videoElement.style.display = 'none';
             
             document.getElementById('loading').style.display = 'flex';
             document.getElementById('start-button').style.display = 'block';
