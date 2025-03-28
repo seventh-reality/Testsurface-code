@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Enhanced WebXR AR Experience</title>
+    <title>WebXR AR with Camera Fix</title>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
     <style>
@@ -72,14 +72,31 @@
             background: rgba(0,0,0,0.5);
             padding: 10px;
             z-index: 5;
+            display: none;
+        }
+        #permission-button {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 15px 30px;
+            font-size: 18px;
+            background: #FF5722;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            z-index: 15;
+            display: none;
         }
     </style>
 </head>
 <body>
     <div id="ar-container"></div>
     <div id="reticle"></div>
-    <div id="hint" style="display: none;">Point at a surface and tap to place object</div>
+    <div id="hint">Point at a surface and tap to place object</div>
     <button id="start-button">Start AR</button>
+    <button id="permission-button">Allow Camera Access</button>
     <div id="loading">
         <h2>Loading AR Experience</h2>
         <p id="progress">Initializing...</p>
@@ -91,7 +108,12 @@
             modelUrl: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF/Duck.gltf',
             modelScale: 0.3,
             requiredFeatures: ['local', 'hit-test'],
-            optionalFeatures: ['dom-overlay']
+            optionalFeatures: ['dom-overlay'],
+            cameraConfig: {
+                facingMode: 'environment',
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
         };
 
         // Global variables
@@ -101,6 +123,8 @@
         let reticleVisible = false;
         let loadingManager = new THREE.LoadingManager();
         let gltfLoader = new THREE.GLTFLoader(loadingManager);
+        let cameraPermissionGranted = false;
+        let currentStream = null;
 
         // Initialize the app
         init();
@@ -109,7 +133,7 @@
             setupScene();
             setupLoadingManager();
             setupEventListeners();
-            checkARSupport();
+            checkCameraPermissions();
         }
 
         function setupScene() {
@@ -148,7 +172,7 @@
             };
 
             loadingManager.onLoad = () => {
-                document.getElementById('loading').style.display = 'none';
+                document.getElementById('progress').textContent = 'Resources loaded';
             };
 
             loadingManager.onError = (url) => {
@@ -158,6 +182,54 @@
 
         function setupEventListeners() {
             document.getElementById('start-button').addEventListener('click', startAR);
+            document.getElementById('permission-button').addEventListener('click', requestCameraPermission);
+        }
+
+        function checkCameraPermissions() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+                document.getElementById('progress').textContent = 'Camera API not available';
+                return;
+            }
+
+            navigator.mediaDevices.getUserMedia({ video: config.cameraConfig })
+                .then(stream => {
+                    // We got permission, but don't need the stream yet
+                    currentStream = stream;
+                    stopStream(stream);
+                    cameraPermissionGranted = true;
+                    checkARSupport();
+                })
+                .catch(err => {
+                    console.log("Camera access error:", err);
+                    document.getElementById('permission-button').style.display = 'block';
+                    document.getElementById('progress').textContent = 'Camera permission required';
+                });
+        }
+
+        function requestCameraPermission() {
+            document.getElementById('progress').textContent = 'Requesting camera access...';
+            document.getElementById('permission-button').style.display = 'none';
+            
+            navigator.mediaDevices.getUserMedia({ video: config.cameraConfig })
+                .then(stream => {
+                    currentStream = stream;
+                    stopStream(stream);
+                    cameraPermissionGranted = true;
+                    document.getElementById('progress').textContent = 'Camera access granted';
+                    checkARSupport();
+                })
+                .catch(err => {
+                    console.error("Camera permission denied:", err);
+                    document.getElementById('progress').textContent = 'Camera access denied. Please allow camera access in your browser settings.';
+                    document.getElementById('permission-button').style.display = 'block';
+                });
+        }
+
+        function stopStream(stream) {
+            if (!stream) return;
+            stream.getTracks().forEach(track => {
+                track.stop();
+            });
         }
 
         function checkARSupport() {
@@ -174,6 +246,7 @@
                         document.getElementById('start-button').style.display = 'none';
                     } else {
                         loadModel();
+                        document.getElementById('loading').style.display = 'none';
                     }
                 })
                 .catch(err => {
@@ -195,6 +268,11 @@
         }
 
         async function startAR() {
+            if (!cameraPermissionGranted) {
+                document.getElementById('permission-button').style.display = 'block';
+                return;
+            }
+
             try {
                 document.getElementById('loading').style.display = 'flex';
                 document.getElementById('progress').textContent = 'Starting AR session...';
@@ -231,9 +309,13 @@
                 document.getElementById('loading').style.display = 'none';
             } catch (error) {
                 console.error("Failed to start AR session:", error);
-                document.getElementById('progress').textContent = 'Failed to start AR session';
+                document.getElementById('progress').textContent = 'Failed to start AR session: ' + error.message;
                 document.getElementById('start-button').style.display = 'block';
                 document.getElementById('loading').style.display = 'none';
+                
+                if (error.message.includes('camera')) {
+                    document.getElementById('permission-button').style.display = 'block';
+                }
             }
         }
 
