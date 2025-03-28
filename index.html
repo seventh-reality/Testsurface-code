@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>Stable WebAR Surface Tracking</title>
+    <title>WebAR with Stable Camera</title>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
     <style>
@@ -102,28 +102,15 @@
             z-index: 20;
             display: none;
         }
-        
-        #debug-info {
-            position: fixed;
-            top: 10px;
-            left: 10px;
-            color: white;
-            background: rgba(0,0,0,0.5);
-            padding: 10px;
-            z-index: 30;
-            font-size: 12px;
-            display: none;
-        }
     </style>
 </head>
 <body>
     <div id="ar-container"></div>
     <div id="reticle"></div>
     <div id="hint">Move your device to detect surfaces</div>
-    <div id="debug-info"></div>
     
     <div id="loading">
-        <h2>AR Surface Tracking</h2>
+        <h2>AR Experience</h2>
         <p>Point your camera at a flat surface</p>
         <div id="progress">Initializing AR...</div>
         <button id="start-button" style="display: none;">Start AR</button>
@@ -143,22 +130,18 @@
     <script>
         // Configuration
         const config = {
-            debug: true,
             modelUrl: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF/Duck.gltf',
             modelScale: 0.5,
-            trackingTimeout: 15000,
-            requiredFeatures: ['local', 'hit-test'],
-            optionalFeatures: ['dom-overlay']
+            trackingTimeout: 10000
         };
 
         // Global variables
         let renderer, scene, camera;
-        let model = null, reticle = null;
+        let model = null;
         let loadingManager = new THREE.LoadingManager();
         let gltfLoader = new THREE.GLTFLoader(loadingManager);
-        let hitTestSource = null, xrSession = null;
-        let xrRefSpace = null, xrViewerSpace = null;
-        let debugInfo = document.getElementById('debug-info');
+        let xrSession = null;
+        let cameraPermissionGranted = false;
         let trackingTimeout = null;
 
         // Initialize the app
@@ -167,15 +150,23 @@
         function init() {
             setupScene();
             setupLoadingManager();
-            setupReticle();
-            checkARSupport();
+            checkCameraPermissions();
         }
 
         function setupScene() {
+            // Create scene
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
+
+            // Create camera
+            camera = new THREE.PerspectiveCamera(
+                70, 
+                window.innerWidth / window.innerHeight, 
+                0.01, 
+                100
+            );
             scene.add(camera);
 
+            // Create renderer
             renderer = new THREE.WebGLRenderer({
                 antialias: true,
                 alpha: true,
@@ -186,6 +177,7 @@
             renderer.xr.enabled = true;
             document.getElementById('ar-container').appendChild(renderer.domElement);
 
+            // Add lights
             const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
             scene.add(ambientLight);
 
@@ -193,21 +185,8 @@
             directionalLight.position.set(0, 5, 5);
             scene.add(directionalLight);
 
-            window.addEventListener('resize', onWindowResize);
-        }
-
-        function setupReticle() {
-            const reticleGeometry = new THREE.RingGeometry(0.1, 0.2, 32);
-            const reticleMaterial = new THREE.MeshBasicMaterial({
-                color: 0x00ff00,
-                opacity: 0.8,
-                transparent: true
-            });
-            reticle = new THREE.Mesh(reticleGeometry, reticleMaterial);
-            reticle.rotation.x = -Math.PI / 2;
-            reticle.matrixAutoUpdate = false;
-            reticle.visible = false;
-            scene.add(reticle);
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize, false);
         }
 
         function setupLoadingManager() {
@@ -222,7 +201,7 @@
 
             loadingManager.onLoad = () => {
                 document.getElementById('progress').textContent = 'Resources loaded';
-                checkCameraPermissions();
+                checkARSupport();
             };
 
             loadingManager.onError = (url) => {
@@ -238,7 +217,9 @@
 
             navigator.mediaDevices.getUserMedia({ video: true })
                 .then(stream => {
+                    // Immediately stop the stream (we just needed permission)
                     stream.getTracks().forEach(track => track.stop());
+                    cameraPermissionGranted = true;
                     document.getElementById('start-button').style.display = 'block';
                     document.getElementById('start-button').addEventListener('click', startAR);
                 })
@@ -255,6 +236,7 @@
             navigator.mediaDevices.getUserMedia({ video: true })
                 .then(stream => {
                     stream.getTracks().forEach(track => track.stop());
+                    cameraPermissionGranted = true;
                     document.getElementById('permission-button').style.display = 'none';
                     document.getElementById('progress').textContent = 'Camera access granted';
                     document.getElementById('start-button').style.display = 'block';
@@ -274,6 +256,7 @@
             navigator.xr.isSessionSupported('immersive-ar')
                 .then(supported => {
                     if (supported) {
+                        // Load the 3D model
                         gltfLoader.load(config.modelUrl, (gltf) => {
                             model = gltf.scene;
                             model.scale.set(config.modelScale, config.modelScale, config.modelScale);
@@ -293,46 +276,85 @@
         function startAR() {
             document.getElementById('loading').style.display = 'none';
             document.getElementById('hint').style.display = 'block';
-            
-            if (config.debug) {
-                debugInfo.style.display = 'block';
-            }
 
+            // Start tracking timeout
+            trackingStartTime = Date.now();
             trackingTimeout = setTimeout(() => {
                 showTrackingFailed();
             }, config.trackingTimeout);
 
+            // Request WebXR session
             navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: config.requiredFeatures,
-                optionalFeatures: config.optionalFeatures
+                requiredFeatures: ['local', 'hit-test'],
+                optionalFeatures: ['dom-overlay']
             })
             .then(session => {
                 xrSession = session;
                 session.addEventListener('end', onSessionEnd);
                 
+                // Set up WebXR session
                 renderer.xr.setSession(session);
                 
+                // Get reference space
                 session.requestReferenceSpace('local')
                     .then(refSpace => {
-                        xrRefSpace = refSpace;
-                        return session.requestReferenceSpace('viewer');
-                    })
-                    .then(viewerSpace => {
-                        xrViewerSpace = viewerSpace;
-                        return session.requestHitTestSource({
-                            space: viewerSpace,
-                            entityTypes: ['plane'],
-                            offsetRay: new XRRay()
-                        });
-                    })
-                    .then(source => {
-                        hitTestSource = source;
-                        renderer.setAnimationLoop(onXRFrame);
-                    })
-                    .catch(err => {
-                        console.error("AR setup error:", err);
-                        showUnsupported("AR initialization failed");
-                        endARSession();
+                        // Setup hit test
+                        session.requestReferenceSpace('viewer')
+                            .then(viewerSpace => {
+                                session.requestHitTestSource({
+                                    space: viewerSpace,
+                                    entityTypes: ['plane'],
+                                    offsetRay: new XRRay()
+                                })
+                                .then(source => {
+                                    // Start render loop
+                                    renderer.setAnimationLoop((time, frame) => {
+                                        if (!frame) return;
+                                        
+                                        const pose = frame.getViewerPose(refSpace);
+                                        if (!pose) return;
+                                        
+                                        // Check for hit test results
+                                        const hitTestResults = frame.getHitTestResults(source);
+                                        if (hitTestResults.length > 0) {
+                                            const hit = hitTestResults[0];
+                                            const hitPose = hit.getPose(refSpace);
+                                            
+                                            if (hitPose) {
+                                                // Show reticle
+                                                document.getElementById('reticle').style.display = 'block';
+                                                const pos = hitPose.transform.position;
+                                                const clipPos = new THREE.Vector3(pos.x, pos.y, pos.z)
+                                                    .project(camera);
+                                                
+                                                const x = (clipPos.x * 0.5 + 0.5) * window.innerWidth;
+                                                const y = (clipPos.y * -0.5 + 0.5) * window.innerHeight;
+                                                document.getElementById('reticle').style.left = `${x}px`;
+                                                document.getElementById('reticle').style.top = `${y}px`;
+                                                
+                                                // Clear tracking timeout
+                                                if (trackingTimeout) {
+                                                    clearTimeout(trackingTimeout);
+                                                    trackingTimeout = null;
+                                                }
+                                                
+                                                // Check for user tap to place model
+                                                if (model && model.visible === false && session.inputSources) {
+                                                    session.inputSources.forEach(source => {
+                                                        if (source.gamepad && source.gamepad.buttons.some(b => b.pressed)) {
+                                                            placeModel(hitPose);
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        } else {
+                                            document.getElementById('reticle').style.display = 'none';
+                                        }
+                                        
+                                        renderer.render(scene, camera);
+                                    });
+                                });
+                            });
                     });
             })
             .catch(err => {
@@ -342,61 +364,23 @@
             });
         }
 
-        function onXRFrame(time, frame) {
-            if (!xrSession || !frame) return;
-
-            if (config.debug) {
-                debugInfo.textContent = `Frame: ${time}\nSession: Active`;
-            }
-
-            const pose = frame.getViewerPose(xrRefSpace);
-            if (!pose) return;
-
-            if (hitTestSource) {
-                const hitTestResults = frame.getHitTestResults(hitTestSource);
-                
-                if (hitTestResults.length > 0) {
-                    const hit = hitTestResults[0];
-                    const hitPose = hit.getPose(xrRefSpace);
-                    
-                    if (hitPose) {
-                        reticle.visible = true;
-                        reticle.matrix.fromArray(hitPose.transform.matrix);
-                        
-                        if (trackingTimeout) {
-                            clearTimeout(trackingTimeout);
-                            trackingTimeout = null;
-                        }
-
-                        if (frame.getInputSources) {
-                            const inputSources = frame.getInputSources();
-                            if (inputSources && inputSources.some(source => 
-                                source.gamepad && source.gamepad.buttons.some(b => b.pressed))) {
-                                placeModel(hitPose);
-                            }
-                        }
-                    }
-                } else {
-                    reticle.visible = false;
-                }
-            }
-
-            renderer.render(scene, camera);
-        }
-
         function placeModel(hitPose) {
             if (!model) return;
             
+            // Position model at hit point
             model.position.set(
                 hitPose.transform.position.x,
                 hitPose.transform.position.y,
                 hitPose.transform.position.z
             );
             
+            // Orient model to surface normal
             const quat = hitPose.transform.orientation;
             model.quaternion.set(quat.x, quat.y, quat.z, quat.w);
+            
             model.visible = true;
             
+            // Hide hint after placement
             document.getElementById('hint').style.display = 'none';
         }
 
@@ -412,18 +396,19 @@
             
             renderer.setAnimationLoop(null);
             
+            document.getElementById('loading').style.display = 'flex';
+            document.getElementById('start-button').style.display = 'block';
+            document.getElementById('hint').style.display = 'none';
+            document.getElementById('reticle').style.display = 'none';
+            
             if (trackingTimeout) {
                 clearTimeout(trackingTimeout);
                 trackingTimeout = null;
             }
             
-            document.getElementById('loading').style.display = 'flex';
-            document.getElementById('start-button').style.display = 'block';
-            document.getElementById('hint').style.display = 'none';
-            debugInfo.style.display = 'none';
-            
-            if (model) model.visible = false;
-            if (reticle) reticle.visible = false;
+            if (model) {
+                model.visible = false;
+            }
         }
 
         function onWindowResize() {
@@ -433,7 +418,7 @@
         }
 
         function showTrackingFailed() {
-            alert("Could not detect surfaces. Try moving your device slowly over a textured surface.");
+            alert("Could not detect any surfaces. Please try again in a different environment with better lighting and more texture.");
             endARSession();
         }
 
