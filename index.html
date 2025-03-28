@@ -10,15 +10,11 @@
     <style>
         body {
             margin: 0;
-            padding: 0;
             overflow: hidden;
             background-color: #000;
             font-family: Arial, sans-serif;
-            -webkit-touch-callout: none;
-            -webkit-user-select: none;
             touch-action: none;
         }
-        
         #ar-container {
             position: fixed;
             top: 0;
@@ -26,7 +22,6 @@
             width: 100%;
             height: 100%;
         }
-        
         #loading {
             position: fixed;
             top: 0;
@@ -41,25 +36,16 @@
             align-items: center;
             z-index: 100;
         }
-        
         #start-button {
             background: linear-gradient(to bottom, #4CAF50, #2E7D32);
             color: white;
-            border: none;
             padding: 15px 30px;
             font-size: 18px;
             border-radius: 30px;
             cursor: pointer;
             margin-top: 20px;
             box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-            transition: transform 0.2s, box-shadow 0.2s;
         }
-        
-        #start-button:active {
-            transform: scale(0.95);
-            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        }
-        
         #unsupported {
             display: none;
             position: fixed;
@@ -73,181 +59,93 @@
             justify-content: center;
             align-items: center;
             z-index: 100;
-            padding: 20px;
-            text-align: center;
-        }
-        
-        #reticle {
-            position: absolute;
-            width: 60px;
-            height: 60px;
-            border: 2px solid rgba(0, 255, 0, 0.8);
-            border-radius: 50%;
-            pointer-events: none;
-            display: none;
-            z-index: 10;
-            transform: translate(-50%, -50%);
-            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
-        }
-        
-        #hint {
-            position: fixed;
-            bottom: 30px;
-            left: 0;
-            width: 100%;
-            text-align: center;
-            color: white;
-            background: rgba(0,0,0,0.5);
-            padding: 10px;
-            z-index: 20;
-            display: none;
         }
     </style>
 </head>
 <body>
     <div id="ar-container"></div>
-    <div id="reticle"></div>
-    <div id="hint">Move your device to detect surfaces</div>
     
     <div id="loading">
         <h2>AR Experience</h2>
-        <p>Point your camera at a flat surface</p>
-        <div id="progress">Initializing AR...</div>
+        <p id="progress">Initializing AR...</p>
         <button id="start-button" style="display: none;">Start AR</button>
-        <button id="permission-button" style="display: none;">Allow Camera Access</button>
     </div>
-    
+
     <div id="unsupported">
         <h2>AR Not Supported</h2>
-        <p id="unsupported-message">Your device or browser doesn't support required AR features.</p>
-        <p>Try using:</p>
-        <ul style="text-align: left; margin: 10px auto; max-width: 300px;">
-            <li>Chrome on Android 8+</li>
-            <li>Safari on iOS 13+</li>
-        </ul>
+        <p>Your device or browser doesn't support WebAR.</p>
     </div>
 
     <script>
-        // Configuration
-        const config = {
-            modelUrl: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF/Duck.gltf',
-            modelScale: 0.5,
-            trackingTimeout: 10000
-        };
-
-        // Global variables
-        let renderer, scene, camera;
+        let renderer, scene, camera, xrSession;
         let model = null;
-        let loadingManager = new THREE.LoadingManager();
-        let gltfLoader = new THREE.GLTFLoader(loadingManager);
-        let xrSession = null;
         let cameraPermissionGranted = false;
-        let trackingTimeout = null;
+        let gltfLoader = new THREE.GLTFLoader();
+        const modelUrl = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF/Duck.gltf';
+        const modelScale = 0.5;
 
-        // Initialize the app
         document.addEventListener('DOMContentLoaded', init);
 
         function init() {
             setupScene();
-            setupLoadingManager();
             checkCameraPermissions();
         }
 
         function setupScene() {
-            // Create scene
             scene = new THREE.Scene();
-
-            // Create camera
-            camera = new THREE.PerspectiveCamera(
-                70, 
-                window.innerWidth / window.innerHeight, 
-                0.01, 
-                100
-            );
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
             scene.add(camera);
 
-            // Create renderer
-            renderer = new THREE.WebGLRenderer({
-                antialias: true,
-                alpha: true,
-                powerPreference: "high-performance"
-            });
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.getElementById('ar-container').appendChild(renderer.domElement);
 
-            // Add lights
-            const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
-            scene.add(ambientLight);
+            const light = new THREE.AmbientLight(0xffffff, 1);
+            scene.add(light);
 
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight.position.set(0, 5, 5);
-            scene.add(directionalLight);
-
-            // Handle window resize
-            window.addEventListener('resize', onWindowResize, false);
-        }
-
-        function setupLoadingManager() {
-            loadingManager.onStart = () => {
-                document.getElementById('progress').textContent = 'Loading resources...';
-            };
-
-            loadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
-                const progress = Math.round(itemsLoaded / itemsTotal * 100);
-                document.getElementById('progress').textContent = `Loading ${progress}%`;
-            };
-
-            loadingManager.onLoad = () => {
-                document.getElementById('progress').textContent = 'Resources loaded';
-                checkARSupport();
-            };
-
-            loadingManager.onError = (url) => {
-                document.getElementById('progress').textContent = `Error loading ${url}`;
-            };
+            window.addEventListener('resize', onWindowResize);
         }
 
         function checkCameraPermissions() {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 showUnsupported("Camera API not available");
                 return;
             }
 
-            navigator.mediaDevices.getUserMedia({ video: true })
-                .then(stream => {
-                    // Immediately stop the stream (we just needed permission)
-                    stream.getTracks().forEach(track => track.stop());
-                    cameraPermissionGranted = true;
-                    document.getElementById('start-button').style.display = 'block';
-                    document.getElementById('start-button').addEventListener('click', startAR);
+            navigator.mediaDevices.enumerateDevices()
+                .then(devices => {
+                    const hasCamera = devices.some(device => device.kind === 'videoinput');
+                    if (!hasCamera) {
+                        showUnsupported("No camera found");
+                        return;
+                    }
+
+                    return navigator.mediaDevices.getUserMedia({ video: true });
                 })
-                .catch(err => {
-                    console.error("Camera access error:", err);
-                    document.getElementById('permission-button').style.display = 'block';
-                    document.getElementById('permission-button').addEventListener('click', requestCameraPermission);
-                    document.getElementById('progress').textContent = 'Camera permission required';
+                .then(stream => {
+                    if (stream) {
+                        stream.getTracks().forEach(track => track.stop());
+                        cameraPermissionGranted = true;
+                        document.getElementById('start-button').style.display = 'block';
+                        document.getElementById('start-button').addEventListener('click', startAR);
+                    }
+                })
+                .catch(() => {
+                    showUnsupported("Camera access denied");
                 });
         }
 
-        function requestCameraPermission() {
-            document.getElementById('progress').textContent = 'Requesting camera access...';
-            navigator.mediaDevices.getUserMedia({ video: true })
-                .then(stream => {
-                    stream.getTracks().forEach(track => track.stop());
-                    cameraPermissionGranted = true;
-                    document.getElementById('permission-button').style.display = 'none';
-                    document.getElementById('progress').textContent = 'Camera access granted';
-                    document.getElementById('start-button').style.display = 'block';
-                })
-                .catch(err => {
-                    console.error("Camera permission denied:", err);
-                    document.getElementById('progress').textContent = 'Camera access denied. Please allow camera access in your browser settings.';
-                });
+        function showUnsupported(message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('unsupported').style.display = 'flex';
+            document.getElementById('unsupported').querySelector('p').textContent = message;
         }
 
-        function checkARSupport() {
+        function startAR() {
+            document.getElementById('loading').style.display = 'none';
+
             if (!navigator.xr) {
                 showUnsupported("WebXR not supported");
                 return;
@@ -256,177 +154,50 @@
             navigator.xr.isSessionSupported('immersive-ar')
                 .then(supported => {
                     if (supported) {
-                        // Load the 3D model
-                        gltfLoader.load(config.modelUrl, (gltf) => {
-                            model = gltf.scene;
-                            model.scale.set(config.modelScale, config.modelScale, config.modelScale);
-                            model.visible = false;
-                            scene.add(model);
-                        });
+                        navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['local-floor'] })
+                            .then(session => {
+                                xrSession = session;
+                                renderer.xr.setSession(session);
+                                session.addEventListener('end', endARSession);
+
+                                gltfLoader.load(modelUrl, gltf => {
+                                    model = gltf.scene;
+                                    model.scale.set(modelScale, modelScale, modelScale);
+                                    model.visible = false;
+                                    scene.add(model);
+                                });
+
+                                renderer.setAnimationLoop(() => {
+                                    renderer.render(scene, camera);
+                                });
+                            })
+                            .catch(() => {
+                                showUnsupported("Failed to start AR session");
+                            });
                     } else {
                         showUnsupported("AR not supported on this device");
                     }
                 })
-                .catch(err => {
-                    console.error("WebXR check failed:", err);
+                .catch(() => {
                     showUnsupported("WebXR check failed");
                 });
         }
 
-        function startAR() {
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('hint').style.display = 'block';
-
-            // Start tracking timeout
-            trackingStartTime = Date.now();
-            trackingTimeout = setTimeout(() => {
-                showTrackingFailed();
-            }, config.trackingTimeout);
-
-            // Request WebXR session
-            navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: ['local', 'hit-test'],
-                optionalFeatures: ['dom-overlay']
-            })
-            .then(session => {
-                xrSession = session;
-                session.addEventListener('end', onSessionEnd);
-                
-                // Set up WebXR session
-                renderer.xr.setSession(session);
-                
-                // Get reference space
-                session.requestReferenceSpace('local')
-                    .then(refSpace => {
-                        // Setup hit test
-                        session.requestReferenceSpace('viewer')
-                            .then(viewerSpace => {
-                                session.requestHitTestSource({
-                                    space: viewerSpace,
-                                    entityTypes: ['plane'],
-                                    offsetRay: new XRRay()
-                                })
-                                .then(source => {
-                                    // Start render loop
-                                    renderer.setAnimationLoop((time, frame) => {
-                                        if (!frame) return;
-                                        
-                                        const pose = frame.getViewerPose(refSpace);
-                                        if (!pose) return;
-                                        
-                                        // Check for hit test results
-                                        const hitTestResults = frame.getHitTestResults(source);
-                                        if (hitTestResults.length > 0) {
-                                            const hit = hitTestResults[0];
-                                            const hitPose = hit.getPose(refSpace);
-                                            
-                                            if (hitPose) {
-                                                // Show reticle
-                                                document.getElementById('reticle').style.display = 'block';
-                                                const pos = hitPose.transform.position;
-                                                const clipPos = new THREE.Vector3(pos.x, pos.y, pos.z)
-                                                    .project(camera);
-                                                
-                                                const x = (clipPos.x * 0.5 + 0.5) * window.innerWidth;
-                                                const y = (clipPos.y * -0.5 + 0.5) * window.innerHeight;
-                                                document.getElementById('reticle').style.left = `${x}px`;
-                                                document.getElementById('reticle').style.top = `${y}px`;
-                                                
-                                                // Clear tracking timeout
-                                                if (trackingTimeout) {
-                                                    clearTimeout(trackingTimeout);
-                                                    trackingTimeout = null;
-                                                }
-                                                
-                                                // Check for user tap to place model
-                                                if (model && model.visible === false && session.inputSources) {
-                                                    session.inputSources.forEach(source => {
-                                                        if (source.gamepad && source.gamepad.buttons.some(b => b.pressed)) {
-                                                            placeModel(hitPose);
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        } else {
-                                            document.getElementById('reticle').style.display = 'none';
-                                        }
-                                        
-                                        renderer.render(scene, camera);
-                                    });
-                                });
-                            });
-                    });
-            })
-            .catch(err => {
-                console.error("Failed to start AR session:", err);
-                showUnsupported("Failed to start AR session");
-                endARSession();
-            });
-        }
-
-        function placeModel(hitPose) {
-            if (!model) return;
-            
-            // Position model at hit point
-            model.position.set(
-                hitPose.transform.position.x,
-                hitPose.transform.position.y,
-                hitPose.transform.position.z
-            );
-            
-            // Orient model to surface normal
-            const quat = hitPose.transform.orientation;
-            model.quaternion.set(quat.x, quat.y, quat.z, quat.w);
-            
-            model.visible = true;
-            
-            // Hide hint after placement
-            document.getElementById('hint').style.display = 'none';
-        }
-
-        function onSessionEnd() {
-            endARSession();
-        }
-
         function endARSession() {
             if (xrSession) {
-                xrSession.removeEventListener('end', onSessionEnd);
+                xrSession.end();
                 xrSession = null;
             }
-            
+
             renderer.setAnimationLoop(null);
-            
             document.getElementById('loading').style.display = 'flex';
             document.getElementById('start-button').style.display = 'block';
-            document.getElementById('hint').style.display = 'none';
-            document.getElementById('reticle').style.display = 'none';
-            
-            if (trackingTimeout) {
-                clearTimeout(trackingTimeout);
-                trackingTimeout = null;
-            }
-            
-            if (model) {
-                model.visible = false;
-            }
         }
 
         function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        function showTrackingFailed() {
-            alert("Could not detect any surfaces. Please try again in a different environment with better lighting and more texture.");
-            endARSession();
-        }
-
-        function showUnsupported(message) {
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('unsupported').style.display = 'flex';
-            document.getElementById('unsupported-message').textContent = message || 
-                "Your device doesn't support required AR features";
         }
     </script>
 </body>
