@@ -102,6 +102,19 @@
             z-index: 5;
             transform-origin: center;
         }
+        
+        #permission-button {
+            background: linear-gradient(to bottom, #2196F3, #0b7dda);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            border-radius: 30px;
+            cursor: pointer;
+            margin-top: 20px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
     </style>
 </head>
 <body>
@@ -114,6 +127,7 @@
         <p>Point your camera at a flat surface</p>
         <div id="progress">Initializing...</div>
         <button id="start-button" style="display: none;">Start AR</button>
+        <button id="permission-button" style="display: none;">Allow Camera Access</button>
     </div>
     
     <div id="unsupported">
@@ -155,6 +169,7 @@
         let isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
         let isAndroid = /Android/i.test(navigator.userAgent);
         let arjsContext, arjsSource;
+        let cameraPermissionGranted = false;
 
         // Initialize the app
         document.addEventListener('DOMContentLoaded', init);
@@ -172,19 +187,69 @@
             // Setup loading manager
             setupLoadingManager();
 
-            // Check for AR support
-            checkARSupport().then(supported => {
-                if (supported) {
-                    document.getElementById('start-button').style.display = 'block';
-                    document.getElementById('start-button').addEventListener('click', startAR);
-                    document.getElementById('progress').textContent = 'Ready for AR';
-                } else {
-                    showUnsupported("AR not supported on this device");
-                }
-            }).catch(error => {
-                console.error("AR support check failed:", error);
-                showUnsupported("Error checking AR support");
+            // Check camera permissions first
+            checkCameraPermissions().then(() => {
+                cameraPermissionGranted = true;
+                // Check for AR support
+                checkARSupport().then(supported => {
+                    if (supported) {
+                        document.getElementById('start-button').style.display = 'block';
+                        document.getElementById('start-button').addEventListener('click', startAR);
+                        document.getElementById('progress').textContent = 'Ready for AR';
+                    } else {
+                        showUnsupported("AR not supported on this device");
+                    }
+                }).catch(error => {
+                    console.error("AR support check failed:", error);
+                    showUnsupported("Error checking AR support");
+                });
+            }).catch(() => {
+                // Show permission button if not granted
+                document.getElementById('permission-button').style.display = 'block';
+                document.getElementById('permission-button').addEventListener('click', requestCameraPermission);
+                document.getElementById('progress').textContent = 'Camera permission required';
             });
+        }
+
+        function checkCameraPermissions() {
+            return new Promise((resolve, reject) => {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+                    reject();
+                    return;
+                }
+                
+                navigator.mediaDevices.enumerateDevices()
+                    .then(devices => {
+                        const hasVideoInput = devices.some(device => device.kind === 'videoinput');
+                        if (!hasVideoInput) {
+                            reject();
+                            return;
+                        }
+                        
+                        // Try to get user media to test permissions
+                        navigator.mediaDevices.getUserMedia({ video: true })
+                            .then(stream => {
+                                stream.getTracks().forEach(track => track.stop());
+                                resolve();
+                            })
+                            .catch(reject);
+                    })
+                    .catch(reject);
+            });
+        }
+
+        function requestCameraPermission() {
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => {
+                    stream.getTracks().forEach(track => track.stop());
+                    cameraPermissionGranted = true;
+                    document.getElementById('permission-button').style.display = 'none';
+                    init(); // Restart initialization
+                })
+                .catch(error => {
+                    console.error("Camera permission denied:", error);
+                    document.getElementById('progress').textContent = 'Camera access denied. Please allow camera access.';
+                });
         }
 
         function setupScene() {
@@ -280,7 +345,8 @@
                         document.body.removeChild(tempSource.domElement);
                         resolve(true);
                     });
-                }, () => {
+                }, (error) => {
+                    console.error("AR.js initialization failed:", error);
                     resolve(false);
                 });
             });
@@ -290,18 +356,23 @@
             document.getElementById('loading').style.display = 'none';
             
             // First try WebXR
-            navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: ['hit-test'],
-                optionalFeatures: ['dom-overlay'],
-                domOverlay: { root: document.body }
-            }).then(session => {
-                arSession = session;
-                setupWebXR();
-            }).catch(error => {
-                console.warn('WebXR failed:', error);
-                // Fallback to AR.js
+            if (navigator.xr && cameraPermissionGranted) {
+                navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['hit-test'],
+                    optionalFeatures: ['dom-overlay'],
+                    domOverlay: { root: document.body }
+                }).then(session => {
+                    arSession = session;
+                    setupWebXR();
+                }).catch(error => {
+                    console.warn('WebXR failed:', error);
+                    // Fallback to AR.js
+                    setupARjs();
+                });
+            } else {
+                // Directly use AR.js if WebXR not available or permission not granted
                 setupARjs();
-            });
+            }
         }
 
         function setupWebXR() {
@@ -408,8 +479,11 @@
                         updateARjs();
                     });
                 });
-            }, () => {
-                showUnsupported("Camera access denied");
+            }, (error) => {
+                console.error("AR.js initialization failed:", error);
+                showUnsupported("Camera access denied or not available");
+                document.getElementById('loading').style.display = 'flex';
+                document.getElementById('start-button').style.display = 'block';
             });
             
             // Add click/tap event for model placement
