@@ -4,10 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>Advanced WebAR Surface Tracking</title>
+    <title>WebAR Surface Tracking</title>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.4.0/dist/ar.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/XRControllerModelFactory.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/webxr/XRHandPrimitiveModel.js"></script>
     <style>
         body {
             margin: 0;
@@ -142,27 +143,28 @@
             display: none;
         }
         
-        #video-feed {
+        #debug-info {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            z-index: -1;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            z-index: 30;
+            font-size: 12px;
             display: none;
         }
     </style>
 </head>
 <body>
     <div id="ar-container"></div>
-    <video id="video-feed" autoplay playsinline></video>
     <div id="reticle"></div>
     <div id="plane-marker"></div>
     <div id="hint">Move your device to detect surfaces</div>
+    <div id="debug-info"></div>
     
     <div id="loading">
-        <h2>AR Experience</h2>
+        <h2>AR Surface Tracking</h2>
         <p>Point your camera at a flat surface</p>
         <div id="progress">Initializing AR...</div>
         <button id="start-button" style="display: none;">Start AR</button>
@@ -180,42 +182,36 @@
     </div>
 
     <script>
-        // Enhanced AR Configuration
+        // Configuration
         const config = {
-            debug: false,
+            debug: true,
             modelUrl: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF/Duck.gltf',
-            modelScale: 0.1,
+            modelScale: 0.5,
             minIOSVersion: 13,
             minAndroidVersion: 8,
             planeDetectionUpdateInterval: 100,
             hitTestRate: 60,
-            arjs: {
-                cameraParametersUrl: 'https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/data/camera_para.dat',
-                detectionMode: 'mono_and_marker',
-                maxDetectionRate: 60,
-                canvasWidth: window.innerWidth,
-                canvasHeight: window.innerHeight,
-                sourceType: 'webcam'
-            },
-            trackingTimeout: 10000 // 10 seconds timeout for tracking
+            trackingTimeout: 15000,
+            requiredFeatures: ['local', 'hit-test'],
+            optionalFeatures: ['dom-overlay']
         };
 
         // Global variables
-        let renderer, scene, camera, controller, arSession = null;
-        let model = null, detectedPlane = null, reticleVisible = false;
+        let renderer, scene, camera, controller;
+        let model = null, reticle = null;
+        let reticleVisible = false;
         let loadingManager = new THREE.LoadingManager();
         let gltfLoader = new THREE.GLTFLoader(loadingManager);
-        let hitTestSource = null, hitTestSourceRequested = false;
-        let lastPlaneDetectionTime = 0;
+        let hitTestSource = null, xrSession = null;
+        let xrRefSpace = null, xrViewerSpace = null;
+        let currentSession = null;
         let isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
         let isAndroid = /Android/i.test(navigator.userAgent);
-        let arjsContext, arjsSource;
         let cameraPermissionGranted = false;
         let trackingStartTime = 0;
         let trackingTimeout = null;
-        let usingWebXR = false;
-        let videoElement = document.getElementById('video-feed');
-        let currentStream = null;
+        let debugInfo = document.getElementById('debug-info');
+        let planes = [];
 
         // Initialize the app
         document.addEventListener('DOMContentLoaded', init);
@@ -226,6 +222,9 @@
 
             // Setup loading manager
             setupLoadingManager();
+
+            // Setup reticle
+            setupReticle();
 
             // First check camera permissions
             checkCameraPermissions()
@@ -256,13 +255,11 @@
 
         function checkCameraPermissions() {
             return new Promise((resolve, reject) => {
-                // Check if browser supports mediaDevices API
                 if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
                     reject('no-media-devices');
                     return;
                 }
 
-                // Try to get user media to test permissions
                 navigator.mediaDevices.getUserMedia({ 
                     video: {
                         facingMode: 'environment',
@@ -271,18 +268,9 @@
                     }
                 })
                 .then(stream => {
-                    // Store the stream for later use
-                    currentStream = stream;
-                    
-                    // Show video feed for debugging
-                    videoElement.srcObject = stream;
-                    videoElement.style.display = 'block';
-                    
                     // Stop the stream immediately (we just needed permission)
-                    setTimeout(() => {
-                        stopStream(stream);
-                        resolve();
-                    }, 100);
+                    stream.getTracks().forEach(track => track.stop());
+                    resolve();
                 })
                 .catch(err => {
                     console.error("Camera access error:", err);
@@ -292,13 +280,6 @@
                         reject('camera-access-failed');
                     }
                 });
-            });
-        }
-
-        function stopStream(stream) {
-            if (!stream) return;
-            stream.getTracks().forEach(track => {
-                track.stop();
             });
         }
 
@@ -313,22 +294,15 @@
                 }
             })
             .then(stream => {
-                // Store the stream
-                currentStream = stream;
-                
-                // Show video feed
-                videoElement.srcObject = stream;
-                videoElement.style.display = 'block';
+                // Stop the stream immediately
+                stream.getTracks().forEach(track => track.stop());
                 
                 cameraPermissionGranted = true;
                 document.getElementById('permission-button').style.display = 'none';
                 document.getElementById('progress').textContent = 'Camera access granted';
                 
                 // Restart initialization
-                setTimeout(() => {
-                    stopStream(stream);
-                    init();
-                }, 500);
+                setTimeout(init, 500);
             })
             .catch(err => {
                 console.error("Camera permission denied:", err);
@@ -342,19 +316,18 @@
 
             // Create camera
             camera = new THREE.PerspectiveCamera(
-                60, 
+                70, 
                 window.innerWidth / window.innerHeight, 
                 0.01, 
                 100
             );
             scene.add(camera);
 
-            // Create renderer with proper configuration
+            // Create renderer
             renderer = new THREE.WebGLRenderer({
                 antialias: true,
                 alpha: true,
-                powerPreference: "high-performance",
-                preserveDrawingBuffer: true // Needed for screenshot functionality
+                powerPreference: "high-performance"
             });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -373,6 +346,20 @@
             // Handle window resize
             window.addEventListener('resize', onWindowResize, false);
             window.addEventListener('orientationchange', onWindowResize, false);
+        }
+
+        function setupReticle() {
+            const reticleGeometry = new THREE.RingGeometry(0.1, 0.2, 32);
+            const reticleMaterial = new THREE.MeshBasicMaterial({
+                color: 0x00ff00,
+                opacity: 0.8,
+                transparent: true
+            });
+            reticle = new THREE.Mesh(reticleGeometry, reticleMaterial);
+            reticle.rotation.x = -Math.PI / 2;
+            reticle.matrixAutoUpdate = false;
+            reticle.visible = false;
+            scene.add(reticle);
         }
 
         function setupLoadingManager() {
@@ -396,85 +383,23 @@
 
         function checkARSupport() {
             return new Promise((resolve, reject) => {
-                // First try WebXR
-                if (navigator.xr) {
-                    navigator.xr.isSessionSupported('immersive-ar')
-                        .then(supported => {
-                            if (supported) {
-                                resolve(true);
-                            } else {
-                                // Fallback to AR.js check
-                                checkARjsSupport()
-                                    .then(supported => {
-                                        if (supported) {
-                                            resolve(true);
-                                        } else {
-                                            reject('no-ar-support');
-                                        }
-                                    })
-                                    .catch(err => {
-                                        reject('arjs-check-failed');
-                                    });
-                            }
-                        })
-                        .catch(err => {
-                            console.warn("WebXR check failed:", err);
-                            checkARjsSupport()
-                                .then(supported => {
-                                    if (supported) {
-                                        resolve(true);
-                                    } else {
-                                        reject('no-ar-support');
-                                    }
-                                })
-                                .catch(err => {
-                                    reject('arjs-check-failed');
-                                });
-                        });
-                } else {
-                    // No WebXR, try AR.js
-                    checkARjsSupport()
-                        .then(supported => {
-                            if (supported) {
-                                resolve(true);
-                            } else {
-                                reject('no-ar-support');
-                            }
-                        })
-                        .catch(err => {
-                            reject('arjs-check-failed');
-                        });
+                if (!navigator.xr) {
+                    reject('WebXR not supported');
+                    return;
                 }
-            });
-        }
 
-        function checkARjsSupport() {
-            return new Promise((resolve, reject) => {
-                // Create a temporary AR.js context to check support
-                const tempSource = new THREEx.ArToolkitSource({
-                    sourceType: config.arjs.sourceType,
-                    sourceWidth: config.arjs.canvasWidth,
-                    sourceHeight: config.arjs.canvasHeight
-                });
-                
-                tempSource.init(() => {
-                    tempSource.domElement.style.display = 'none';
-                    document.body.appendChild(tempSource.domElement);
-                    
-                    const tempContext = new THREEx.ArToolkitContext({
-                        cameraParametersUrl: config.arjs.cameraParametersUrl,
-                        detectionMode: config.arjs.detectionMode,
-                        maxDetectionRate: config.arjs.maxDetectionRate
+                navigator.xr.isSessionSupported('immersive-ar')
+                    .then(supported => {
+                        if (supported) {
+                            resolve(true);
+                        } else {
+                            reject('immersive-ar not supported');
+                        }
+                    })
+                    .catch(err => {
+                        console.error("WebXR check failed:", err);
+                        reject('WebXR check failed');
                     });
-                    
-                    tempContext.init(() => {
-                        document.body.removeChild(tempSource.domElement);
-                        resolve(true);
-                    });
-                }, (error) => {
-                    console.error("AR.js initialization failed:", error);
-                    reject(error);
-                });
             });
         }
 
@@ -482,224 +407,73 @@
             document.getElementById('loading').style.display = 'none';
             document.getElementById('hint').style.display = 'block';
             
+            if (config.debug) {
+                debugInfo.style.display = 'block';
+            }
+
             // Start tracking timeout
             trackingStartTime = Date.now();
             trackingTimeout = setTimeout(() => {
-                if (!detectedPlane) {
+                if (!reticleVisible) {
                     showTrackingFailed();
                 }
             }, config.trackingTimeout);
 
-            // First try WebXR
-            if (navigator.xr && cameraPermissionGranted) {
-                navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['hit-test'],
-                    optionalFeatures: ['dom-overlay'],
-                    domOverlay: { root: document.body }
-                })
-                .then(session => {
-                    usingWebXR = true;
-                    arSession = session;
-                    setupWebXR();
-                })
-                .catch(error => {
-                    console.warn('WebXR failed:', error);
-                    // Fallback to AR.js
-                    usingWebXR = false;
-                    setupARjs();
-                });
-            } else {
-                // Directly use AR.js if WebXR not available or permission not granted
-                usingWebXR = false;
-                setupARjs();
-            }
-        }
-
-        function setupWebXR() {
-            renderer.xr.setSession(arSession);
-            
-            // Setup hit test
-            setupHitTest();
-            
-            // Load model
-            loadModel().then(() => {
-                // Main render loop
-                renderer.setAnimationLoop(() => {
-                    if (!renderer.xr.isPresenting) return;
-                    
-                    updateReticle();
-                    renderer.clear();
-                    renderer.render(scene, camera);
-                });
-            });
-            
-            // Handle session end
-            arSession.addEventListener('end', () => {
+            // Request WebXR session
+            navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: config.requiredFeatures,
+                optionalFeatures: config.optionalFeatures
+            })
+            .then(session => {
+                currentSession = session;
+                session.addEventListener('end', onSessionEnd);
+                
+                // Set up WebXR session
+                renderer.xr.setSession(session);
+                
+                // Get reference space
+                session.requestReferenceSpace('local')
+                    .then(refSpace => {
+                        xrRefSpace = refSpace;
+                        
+                        // Create another reference space that has the viewer as the origin
+                        session.requestReferenceSpace('viewer')
+                            .then(viewerSpace => {
+                                xrViewerSpace = viewerSpace;
+                                
+                                // Setup hit test
+                                setupHitTest();
+                                
+                                // Load model
+                                loadModel().then(() => {
+                                    // Start render loop
+                                    renderer.setAnimationLoop(onXRFrame);
+                                });
+                            });
+                    });
+            })
+            .catch(err => {
+                console.error("Failed to start AR session:", err);
+                showUnsupported("Failed to start AR session: " + err.message);
                 endARSession();
             });
         }
 
         function setupHitTest() {
-            const referenceSpace = renderer.xr.getReferenceSpace();
-            
+            if (!currentSession || !xrViewerSpace) return;
+
             // Request hit test source for screen taps
-            const viewerSpace = renderer.xr.getReferenceSpace();
-            viewerSpace.requestHitTestSource({ 
+            currentSession.requestHitTestSource({
+                space: xrViewerSpace,
                 entityTypes: ['plane'],
-                offsetRay: new XRRay(new DOMPoint(0, 0, 0), {x: 0, y: 0, z: -1, w: 1})
+                offsetRay: new XRRay()
             })
             .then(source => {
                 hitTestSource = source;
             })
-            .catch(error => {
-                console.error("Failed to get hit test source:", error);
+            .catch(err => {
+                console.error("Failed to get hit test source:", err);
             });
-            
-            // Continuous hit test for reticle
-            viewerSpace.requestHitTestSourceForTransientInput({
-                profile: 'generic-touchscreen',
-                offsetRay: new XRRay(new DOMPoint(0, 0, 0), {x: 0, y: 0, z: -1, w: 1})
-            })
-            .then(source => {
-                const inputSource = renderer.xr.getSession().inputSources[0];
-                
-                renderer.xr.getSession().requestAnimationFrame((time, frame) => {
-                    const hitTestResults = frame.getHitTestResults(source);
-                    
-                    if (hitTestResults.length > 0) {
-                        const hit = hitTestResults[0];
-                        const hitPose = hit.getPose(referenceSpace);
-                        
-                        if (hitPose) {
-                            detectedPlane = hitPose;
-                            reticleVisible = true;
-                            
-                            // Clear tracking timeout since we detected a plane
-                            if (trackingTimeout) {
-                                clearTimeout(trackingTimeout);
-                                trackingTimeout = null;
-                            }
-                            
-                            // Update reticle position
-                            const reticle = document.getElementById('reticle');
-                            reticle.style.display = 'block';
-                            reticle.style.left = `${inputSource.targetRaySpace.coords.x * window.innerWidth}px`;
-                            reticle.style.top = `${inputSource.targetRaySpace.coords.y * window.innerHeight}px`;
-                        }
-                    } else {
-                        reticleVisible = false;
-                        document.getElementById('reticle').style.display = 'none';
-                    }
-                });
-            });
-        }
-
-        function setupARjs() {
-            // First get camera stream
-            navigator.mediaDevices.getUserMedia({ 
-                video: {
-                    facingMode: 'environment',
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 }
-                }
-            })
-            .then(stream => {
-                currentStream = stream;
-                videoElement.srcObject = stream;
-                videoElement.style.display = 'block';
-                
-                // AR.js implementation
-                arjsSource = new THREEx.ArToolkitSource({
-                    sourceType: 'video',
-                    sourceWidth: stream.getVideoTracks()[0].getSettings().width || config.arjs.canvasWidth,
-                    sourceHeight: stream.getVideoTracks()[0].getSettings().height || config.arjs.canvasHeight,
-                    displayWidth: window.innerWidth,
-                    displayHeight: window.innerHeight
-                });
-                
-                // Use the existing video element
-                arjsSource.domElement = videoElement;
-                
-                arjsContext = new THREEx.ArToolkitContext({
-                    cameraParametersUrl: config.arjs.cameraParametersUrl,
-                    detectionMode: config.arjs.detectionMode,
-                    maxDetectionRate: config.arjs.maxDetectionRate,
-                    canvasWidth: config.arjs.canvasWidth,
-                    canvasHeight: config.arjs.canvasHeight
-                });
-                
-                // Initialize AR.js
-                arjsSource.init(() => {
-                    arjsSource.onResize(renderer.domElement);
-                    
-                    arjsContext.init(() => {
-                        camera.projectionMatrix.copy(arjsContext.getProjectionMatrix());
-                        
-                        // Load model
-                        loadModel().then(() => {
-                            // Start update loop
-                            updateARjs();
-                        });
-                    });
-                }, (error) => {
-                    console.error("AR.js initialization failed:", error);
-                    showUnsupported("AR initialization failed");
-                    endARSession();
-                });
-                
-                // Add click/tap event for model placement
-                window.addEventListener('click', placeModelARjs);
-                window.addEventListener('touchstart', placeModelARjs);
-            })
-            .catch(error => {
-                console.error("Failed to get camera stream:", error);
-                showUnsupported("Failed to access camera");
-                endARSession();
-            });
-        }
-
-        function updateARjs() {
-            if (arjsSource && arjsSource.ready && arjsContext) {
-                arjsContext.update(arjsSource.domElement);
-                
-                // Update camera projection matrix
-                camera.projectionMatrix.copy(arjsContext.getProjectionMatrix());
-                
-                // Get detected markers/planes
-                const markers = arjsContext.getMarkers();
-                
-                // Simulate plane detection
-                if (markers.length > 0) {
-                    detectedPlane = {
-                        position: new THREE.Vector3(
-                            0, // Center X
-                            -1, // Slightly below camera
-                            -1.5 // 1.5m in front of camera
-                        ),
-                        rotation: new THREE.Euler()
-                    };
-                    
-                    // Show reticle at screen center
-                    const reticle = document.getElementById('reticle');
-                    reticle.style.display = 'block';
-                    reticle.style.left = `${window.innerWidth / 2}px`;
-                    reticle.style.top = `${window.innerHeight / 2}px`;
-                    reticleVisible = true;
-                    
-                    // Clear tracking timeout since we detected a plane
-                    if (trackingTimeout) {
-                        clearTimeout(trackingTimeout);
-                        trackingTimeout = null;
-                    }
-                } else {
-                    reticleVisible = false;
-                    document.getElementById('reticle').style.display = 'none';
-                }
-            }
-            
-            renderer.clear();
-            renderer.render(scene, camera);
-            requestAnimationFrame(updateARjs);
         }
 
         function loadModel() {
@@ -717,19 +491,98 @@
             });
         }
 
-        function placeModelARjs(event) {
-            if (!reticleVisible || !model) return;
+        function onXRFrame(time, frame) {
+            if (!currentSession || !frame) return;
+
+            // Update debug info
+            if (config.debug) {
+                updateDebugInfo(frame);
+            }
+
+            // Get pose and update camera
+            const pose = frame.getViewerPose(xrRefSpace);
+            if (!pose) return;
+
+            // Update reticle position with hit test
+            if (hitTestSource) {
+                const hitTestResults = frame.getHitTestResults(hitTestSource);
+                
+                if (hitTestResults.length > 0) {
+                    const hit = hitTestResults[0];
+                    const hitPose = hit.getPose(xrRefSpace);
+                    
+                    if (hitPose) {
+                        // Update reticle position
+                        reticle.visible = true;
+                        reticle.matrix.fromArray(hitPose.transform.matrix);
+                        
+                        // Clear tracking timeout since we detected a plane
+                        if (trackingTimeout) {
+                            clearTimeout(trackingTimeout);
+                            trackingTimeout = null;
+                        }
+                        
+                        // Show screen reticle
+                        document.getElementById('reticle').style.display = 'block';
+                        const pos = hitPose.transform.position;
+                        const clipPos = new THREE.Vector3(pos.x, pos.y, pos.z)
+                            .project(camera);
+                        
+                        const x = (clipPos.x * 0.5 + 0.5) * window.innerWidth;
+                        const y = (clipPos.y * -0.5 + 0.5) * window.innerHeight;
+                        document.getElementById('reticle').style.left = `${x}px`;
+                        document.getElementById('reticle').style.top = `${y}px`;
+                        
+                        reticleVisible = true;
+                        
+                        // Check for user tap to place model
+                        if (model && model.visible === false && currentSession.inputSources) {
+                            currentSession.inputSources.forEach(source => {
+                                if (source.gamepad && source.gamepad.buttons.some(b => b.pressed)) {
+                                    placeModel(hitPose);
+                                }
+                            });
+                        }
+                    }
+                } else {
+                    reticle.visible = false;
+                    document.getElementById('reticle').style.display = 'none';
+                    reticleVisible = false;
+                }
+            }
+
+            // Render scene
+            renderer.clear();
+            renderer.render(scene, camera);
+        }
+
+        function placeModel(hitPose) {
+            if (!model) return;
             
-            // Place model at reticle position
-            model.position.copy(detectedPlane.position);
-            model.rotation.copy(detectedPlane.rotation);
+            // Position model at hit point
+            model.position.set(
+                hitPose.transform.position.x,
+                hitPose.transform.position.y,
+                hitPose.transform.position.z
+            );
+            
+            // Orient model to surface normal
+            const quat = hitPose.transform.orientation;
+            model.quaternion.set(quat.x, quat.y, quat.z, quat.w);
+            
             model.visible = true;
             
             // Show plane marker
             const marker = document.getElementById('plane-marker');
             marker.style.display = 'block';
-            marker.style.left = `${event.clientX || event.touches[0].clientX}px`;
-            marker.style.top = `${event.clientY || event.touches[0].clientY}px`;
+            const pos = hitPose.transform.position;
+            const clipPos = new THREE.Vector3(pos.x, pos.y, pos.z)
+                .project(camera);
+            
+            const x = (clipPos.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (clipPos.y * -0.5 + 0.5) * window.innerHeight;
+            marker.style.left = `${x}px`;
+            marker.style.top = `${y}px`;
             
             setTimeout(() => {
                 marker.style.display = 'none';
@@ -739,101 +592,57 @@
             document.getElementById('hint').style.display = 'none';
         }
 
-        function updateReticle() {
-            if (!hitTestSource || !renderer.xr.isPresenting) return;
+        function updateDebugInfo(frame) {
+            if (!frame) return;
             
-            const frame = renderer.xr.getFrame();
-            const referenceSpace = renderer.xr.getReferenceSpace();
+            let debugText = `WebXR Session: ${currentSession ? 'Active' : 'Inactive'}\n`;
             
-            const hitTestResults = frame.getHitTestResults(hitTestSource);
-            if (hitTestResults.length > 0) {
-                const hit = hitTestResults[0];
-                const hitPose = hit.getPose(referenceSpace);
+            if (frame.getHitTestResults) {
+                const hitTestResults = frame.getHitTestResults(hitTestSource);
+                debugText += `Hit Tests: ${hitTestResults.length}\n`;
                 
-                if (hitPose) {
-                    detectedPlane = hitPose;
-                    reticleVisible = true;
-                    
-                    // Place reticle at hit position
-                    const reticle = document.getElementById('reticle');
-                    reticle.style.display = 'block';
-                    
-                    // Convert 3D position to 2D screen coordinates
-                    const pos = hitPose.transform.position;
-                    const clipPos = new THREE.Vector3(pos.x, pos.y, pos.z)
-                        .project(camera);
-                    
-                    const x = (clipPos.x * 0.5 + 0.5) * window.innerWidth;
-                    const y = (clipPos.y * -0.5 + 0.5) * window.innerHeight;
-                    reticle.style.left = `${x}px`;
-                    reticle.style.top = `${y}px`;
-                    
-                    // Place model if user taps
-                    if (model && model.visible === false) {
-                        model.position.set(pos.x, pos.y, pos.z);
-                        
-                        // Get orientation from hit pose
-                        const quat = hitPose.transform.orientation;
-                        model.quaternion.set(quat.x, quat.y, quat.z, quat.w);
-                        
-                        model.visible = true;
-                        
-                        // Show plane marker
-                        const marker = document.getElementById('plane-marker');
-                        marker.style.display = 'block';
-                        marker.style.left = `${x}px`;
-                        marker.style.top = `${y}px`;
-                        
-                        setTimeout(() => {
-                            marker.style.display = 'none';
-                        }, 1000);
-                        
-                        // Hide hint after placement
-                        document.getElementById('hint').style.display = 'none';
+                if (hitTestResults.length > 0) {
+                    const hitPose = hitTestResults[0].getPose(xrRefSpace);
+                    if (hitPose) {
+                        debugText += `Position: ${hitPose.transform.position.x.toFixed(2)}, ${hitPose.transform.position.y.toFixed(2)}, ${hitPose.transform.position.z.toFixed(2)}\n`;
                     }
                 }
-            } else {
-                reticleVisible = false;
-                document.getElementById('reticle').style.display = 'none';
             }
+            
+            debugInfo.textContent = debugText;
+        }
+
+        function onSessionEnd() {
+            endARSession();
+        }
+
+        function endARSession() {
+            if (currentSession) {
+                currentSession.removeEventListener('end', onSessionEnd);
+                currentSession = null;
+            }
+            
+            renderer.setAnimationLoop(null);
+            
+            document.getElementById('loading').style.display = 'flex';
+            document.getElementById('start-button').style.display = 'block';
+            document.getElementById('hint').style.display = 'none';
+            document.getElementById('reticle').style.display = 'none';
+            document.getElementById('plane-marker').style.display = 'none';
+            debugInfo.style.display = 'none';
+            
+            if (trackingTimeout) {
+                clearTimeout(trackingTimeout);
+                trackingTimeout = null;
+            }
+            
+            resetScene();
         }
 
         function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
-            
-            if (arjsSource && arjsSource.onResize) {
-                arjsSource.onResize(renderer.domElement);
-                if (arjsContext && arjsContext.arController) {
-                    arjsContext.arController.setProjectionMatrix();
-                }
-            }
-        }
-
-        function endARSession() {
-            if (usingWebXR) {
-                renderer.setAnimationLoop(null);
-            }
-            
-            // Stop any camera streams
-            if (currentStream) {
-                stopStream(currentStream);
-                currentStream = null;
-            }
-            
-            // Hide video feed
-            videoElement.style.display = 'none';
-            
-            document.getElementById('loading').style.display = 'flex';
-            document.getElementById('start-button').style.display = 'block';
-            document.getElementById('hint').style.display = 'none';
-            resetScene();
-            
-            if (trackingTimeout) {
-                clearTimeout(trackingTimeout);
-                trackingTimeout = null;
-            }
         }
 
         function showTrackingFailed() {
@@ -845,10 +654,10 @@
             if (model) {
                 model.visible = false;
             }
-            detectedPlane = null;
+            if (reticle) {
+                reticle.visible = false;
+            }
             reticleVisible = false;
-            document.getElementById('reticle').style.display = 'none';
-            document.getElementById('plane-marker').style.display = 'none';
         }
 
         function showUnsupported(message) {
