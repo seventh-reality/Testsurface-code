@@ -7,8 +7,6 @@
     <title>WebAR Surface Tracking</title>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/XRControllerModelFactory.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/webxr/XRHandPrimitiveModel.js"></script>
     <style>
         body {
             margin: 0;
@@ -154,10 +152,22 @@
             font-size: 12px;
             display: none;
         }
+        
+        #video-feed {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: -1;
+            display: none;
+        }
     </style>
 </head>
 <body>
     <div id="ar-container"></div>
+    <video id="video-feed" autoplay playsinline></video>
     <div id="reticle"></div>
     <div id="plane-marker"></div>
     <div id="hint">Move your device to detect surfaces</div>
@@ -211,7 +221,8 @@
         let trackingStartTime = 0;
         let trackingTimeout = null;
         let debugInfo = document.getElementById('debug-info');
-        let planes = [];
+        let videoElement = document.getElementById('video-feed');
+        let currentStream = null;
 
         // Initialize the app
         document.addEventListener('DOMContentLoaded', init);
@@ -268,9 +279,17 @@
                     }
                 })
                 .then(stream => {
-                    // Stop the stream immediately (we just needed permission)
-                    stream.getTracks().forEach(track => track.stop());
-                    resolve();
+                    // Show video feed temporarily to verify camera access
+                    videoElement.srcObject = stream;
+                    videoElement.style.display = 'block';
+                    currentStream = stream;
+                    
+                    // Stop the stream after verification (we'll restart it properly in AR session)
+                    setTimeout(() => {
+                        stopStream(stream);
+                        videoElement.style.display = 'none';
+                        resolve();
+                    }, 500);
                 })
                 .catch(err => {
                     console.error("Camera access error:", err);
@@ -280,6 +299,13 @@
                         reject('camera-access-failed');
                     }
                 });
+            });
+        }
+
+        function stopStream(stream) {
+            if (!stream) return;
+            stream.getTracks().forEach(track => {
+                track.stop();
             });
         }
 
@@ -294,15 +320,21 @@
                 }
             })
             .then(stream => {
-                // Stop the stream immediately
-                stream.getTracks().forEach(track => track.stop());
+                // Show video feed temporarily
+                videoElement.srcObject = stream;
+                videoElement.style.display = 'block';
+                currentStream = stream;
                 
                 cameraPermissionGranted = true;
                 document.getElementById('permission-button').style.display = 'none';
                 document.getElementById('progress').textContent = 'Camera access granted';
                 
-                // Restart initialization
-                setTimeout(init, 500);
+                // Stop stream and restart initialization
+                setTimeout(() => {
+                    stopStream(stream);
+                    videoElement.style.display = 'none';
+                    init();
+                }, 500);
             })
             .catch(err => {
                 console.error("Camera permission denied:", err);
@@ -419,42 +451,71 @@
                 }
             }, config.trackingTimeout);
 
-            // Request WebXR session
-            navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: config.requiredFeatures,
-                optionalFeatures: config.optionalFeatures
+            // First get camera stream
+            navigator.mediaDevices.getUserMedia({ 
+                video: {
+                    facingMode: 'environment',
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
             })
-            .then(session => {
-                currentSession = session;
-                session.addEventListener('end', onSessionEnd);
+            .then(stream => {
+                currentStream = stream;
+                videoElement.srcObject = stream;
+                videoElement.style.display = 'block';
                 
-                // Set up WebXR session
-                renderer.xr.setSession(session);
-                
-                // Get reference space
-                session.requestReferenceSpace('local')
-                    .then(refSpace => {
-                        xrRefSpace = refSpace;
-                        
-                        // Create another reference space that has the viewer as the origin
-                        session.requestReferenceSpace('viewer')
-                            .then(viewerSpace => {
-                                xrViewerSpace = viewerSpace;
-                                
-                                // Setup hit test
-                                setupHitTest();
-                                
-                                // Load model
-                                loadModel().then(() => {
-                                    // Start render loop
-                                    renderer.setAnimationLoop(onXRFrame);
+                // Request WebXR session
+                navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: config.requiredFeatures,
+                    optionalFeatures: config.optionalFeatures
+                })
+                .then(session => {
+                    currentSession = session;
+                    session.addEventListener('end', onSessionEnd);
+                    
+                    // Set up WebXR session
+                    renderer.xr.setSession(session);
+                    
+                    // Get reference space
+                    session.requestReferenceSpace('local')
+                        .then(refSpace => {
+                            xrRefSpace = refSpace;
+                            
+                            // Create another reference space that has the viewer as the origin
+                            session.requestReferenceSpace('viewer')
+                                .then(viewerSpace => {
+                                    xrViewerSpace = viewerSpace;
+                                    
+                                    // Setup hit test
+                                    setupHitTest();
+                                    
+                                    // Load model
+                                    loadModel().then(() => {
+                                        // Start render loop
+                                        renderer.setAnimationLoop(onXRFrame);
+                                    });
+                                })
+                                .catch(err => {
+                                    console.error("Failed to get viewer space:", err);
+                                    showUnsupported("Failed to initialize AR tracking");
+                                    endARSession();
                                 });
-                            });
-                    });
+                        })
+                        .catch(err => {
+                            console.error("Failed to get reference space:", err);
+                            showUnsupported("Failed to initialize AR tracking");
+                            endARSession();
+                        });
+                })
+                .catch(err => {
+                    console.error("Failed to start AR session:", err);
+                    showUnsupported("Failed to start AR session: " + err.message);
+                    endARSession();
+                });
             })
             .catch(err => {
-                console.error("Failed to start AR session:", err);
-                showUnsupported("Failed to start AR session: " + err.message);
+                console.error("Failed to get camera stream:", err);
+                showUnsupported("Failed to access camera");
                 endARSession();
             });
         }
@@ -466,13 +527,24 @@
             currentSession.requestHitTestSource({
                 space: xrViewerSpace,
                 entityTypes: ['plane'],
-                offsetRay: new XRRay()
+                offsetRay: new XRRay(new DOMPoint(0, 0, 0), {x: 0, y: 0, z: -1, w: 1})
             })
             .then(source => {
                 hitTestSource = source;
             })
             .catch(err => {
                 console.error("Failed to get hit test source:", err);
+                // Try again with simpler configuration
+                currentSession.requestHitTestSourceForTransientInput({
+                    profile: 'generic-touchscreen',
+                    offsetRay: new XRRay(new DOMPoint(0, 0, 0), {x: 0, y: 0, z: -1, w: 1})
+                })
+                .then(transientSource => {
+                    hitTestSource = transientSource;
+                })
+                .catch(transientErr => {
+                    console.error("Failed to get transient hit test source:", transientErr);
+                });
             });
         }
 
@@ -599,9 +671,9 @@
             
             if (frame.getHitTestResults) {
                 const hitTestResults = frame.getHitTestResults(hitTestSource);
-                debugText += `Hit Tests: ${hitTestResults.length}\n`;
+                debugText += `Hit Tests: ${hitTestResults ? hitTestResults.length : 0}\n`;
                 
-                if (hitTestResults.length > 0) {
+                if (hitTestResults && hitTestResults.length > 0) {
                     const hitPose = hitTestResults[0].getPose(xrRefSpace);
                     if (hitPose) {
                         debugText += `Position: ${hitPose.transform.position.x.toFixed(2)}, ${hitPose.transform.position.y.toFixed(2)}, ${hitPose.transform.position.z.toFixed(2)}\n`;
@@ -623,6 +695,14 @@
             }
             
             renderer.setAnimationLoop(null);
+            
+            // Stop camera stream
+            if (currentStream) {
+                stopStream(currentStream);
+                currentStream = null;
+            }
+            
+            videoElement.style.display = 'none';
             
             document.getElementById('loading').style.display = 'flex';
             document.getElementById('start-button').style.display = 'block';
