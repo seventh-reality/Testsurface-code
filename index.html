@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Free WebAR with Surface Tracking</title>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.4.0/dist/ar.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: Arial, sans-serif;
+        }
+        
+        #ar-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+        
+        #start-button {
+            background: linear-gradient(to bottom, #4CAF50, #2E7D32);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            border-radius: 30px;
+            cursor: pointer;
+            margin-top: 20px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        
+        #unsupported {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.9);
+            color: white;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            padding: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="ar-container"></div>
+    
+    <div id="loading">
+        <h2>Loading AR Experience</h2>
+        <p>Please wait while we initialize the AR environment</p>
+        <div id="progress">0%</div>
+        <button id="start-button" style="display: none;">Start AR</button>
+    </div>
+    
+    <div id="unsupported">
+        <h2>AR Not Supported</h2>
+        <p>Your device or browser doesn't support WebXR with surface tracking.</p>
+        <p>Try using Chrome on Android or Safari on iOS 12+.</p>
+    </div>
+
+    <script>
+        // Configuration
+        const config = {
+            debug: false,
+            planeColor: 0x00ff00,
+            planeOpacity: 0.5,
+            modelUrl: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF/Duck.gltf',
+            modelScale: 0.5,
+            minIOSVersion: 12,
+            minAndroidVersion: 8
+        };
+
+        // Global variables
+        let renderer, scene, camera, controller;
+        let arSession = null;
+        let model = null;
+        let detectedPlane = null;
+        let loadingManager = new THREE.LoadingManager();
+        let gltfLoader = new THREE.GLTFLoader(loadingManager);
+
+        // Initialize the app
+        init();
+
+        function init() {
+            // Check for WebXR support
+            if (!navigator.xr) {
+                showUnsupported("WebXR not supported in this browser");
+                return;
+            }
+
+            // Setup Three.js scene
+            setupScene();
+
+            // Setup loading manager
+            setupLoadingManager();
+
+            // Check for AR support
+            checkARSupport().then(supported => {
+                if (supported) {
+                    document.getElementById('start-button').style.display = 'block';
+                    document.getElementById('start-button').addEventListener('click', startAR);
+                } else {
+                    showUnsupported("AR not supported on this device");
+                }
+            });
+        }
+
+        function setupScene() {
+            // Create scene
+            scene = new THREE.Scene();
+
+            // Create camera
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            scene.add(camera);
+
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.getElementById('ar-container').appendChild(renderer.domElement);
+
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(0, 10, 0);
+            scene.add(directionalLight);
+
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function setupLoadingManager() {
+            loadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
+                const progress = Math.round(itemsLoaded / itemsTotal * 100);
+                document.getElementById('progress').textContent = `${progress}%`;
+            };
+
+            loadingManager.onLoad = () => {
+                document.getElementById('progress').textContent = '100%';
+            };
+        }
+
+        function checkARSupport() {
+            return navigator.xr.isSessionSupported('immersive-ar')
+                .then(supported => {
+                    if (supported) return true;
+                    
+                    // Fallback to AR.js for older devices
+                    return new Promise(resolve => {
+                        const arToolkitContext = new THREEx.ArToolkitContext({
+                            cameraParametersUrl: 'https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/data/camera_para.dat',
+                            detectionMode: 'mono'
+                        });
+                        
+                        arToolkitContext.init(() => {
+                            resolve(true);
+                        });
+                    });
+                })
+                .catch(() => false);
+        }
+
+        function startAR() {
+            document.getElementById('loading').style.display = 'none';
+            
+            // Try WebXR first
+            navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: ['hit-test', 'dom-overlay'],
+                domOverlay: { root: document.body }
+            }).then(session => {
+                arSession = session;
+                setupWebXR();
+            }).catch(error => {
+                console.warn('WebXR failed, falling back to AR.js', error);
+                setupARjs();
+            });
+        }
+
+        function setupWebXR() {
+            renderer.xr.setSession(arSession);
+            
+            // Create controller for hit testing
+            controller = renderer.xr.getController(0);
+            scene.add(controller);
+            
+            // Handle hit test
+            controller.addEventListener('select', onSelect);
+            
+            // Create reticle for plane detection
+            const reticleGeometry = new THREE.RingGeometry(0.1, 0.11, 32).rotateX(-Math.PI / 2);
+            const reticleMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const reticle = new THREE.Mesh(reticleGeometry, reticleMaterial);
+            reticle.matrixAutoUpdate = false;
+            reticle.visible = false;
+            scene.add(reticle);
+            
+            // Main render loop
+            renderer.setAnimationLoop(() => {
+                if (!renderer.xr.isPresenting) return;
+                
+                // Update hit test
+                const referenceSpace = renderer.xr.getReferenceSpace();
+                const session = renderer.xr.getSession();
+                
+                if (session && referenceSpace) {
+                    const raycastResult = controller.raycast();
+                    
+                    if (raycastResult && raycastResult.length > 0) {
+                        const hit = raycastResult[0];
+                        reticle.visible = true;
+                        reticle.matrix.fromArray(hit.transform.matrix);
+                        
+                        // Store the detected plane
+                        detectedPlane = hit;
+                    } else {
+                        reticle.visible = false;
+                    }
+                }
+                
+                renderer.render(scene, camera);
+            });
+            
+            // Load model
+            loadModel();
+        }
+
+        function setupARjs() {
+            // AR.js implementation for older devices
+            const arToolkitSource = new THREEx.ArToolkitSource({
+                sourceType: 'webcam'
+            });
+            
+            const arToolkitContext = new THREEx.ArToolkitContext({
+                cameraParametersUrl: 'https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/data/camera_para.dat',
+                detectionMode: 'mono'
+            });
+            
+            // Initialize AR.js
+            arToolkitSource.init(() => {
+                arToolkitSource.onResize(renderer.domElement);
+                arToolkitContext.init(() => {
+                    camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+                });
+            });
+            
+            // Update function
+            const update = () => {
+                if (arToolkitSource.ready) {
+                    arToolkitContext.update(arToolkitSource.domElement);
+                }
+                
+                // Simple plane detection simulation for AR.js
+                if (!detectedPlane && Math.random() < 0.01) {
+                    detectedPlane = {
+                        position: new THREE.Vector3(
+                            (Math.random() - 0.5) * 2,
+                            -1,
+                            (Math.random() - 0.5) * 2 - 2
+                        )
+                    };
+                    
+                    if (model) {
+                        model.position.copy(detectedPlane.position);
+                        model.visible = true;
+                    }
+                }
+                
+                renderer.render(scene, camera);
+                requestAnimationFrame(update);
+            };
+            
+            update();
+            
+            // Load model
+            loadModel();
+        }
+
+        function loadModel() {
+            gltfLoader.load(config.modelUrl, (gltf) => {
+                model = gltf.scene;
+                model.scale.set(config.modelScale, config.modelScale, config.modelScale);
+                model.visible = false;
+                scene.add(model);
+            });
+        }
+
+        function onSelect() {
+            if (!detectedPlane) return;
+            
+            if (model) {
+                if (renderer.xr.isPresenting) {
+                    // WebXR placement
+                    model.position.setFromMatrixPosition(detectedPlane.transform.matrix);
+                    model.quaternion.setFromRotationMatrix(detectedPlane.transform.matrix);
+                } else {
+                    // AR.js placement
+                    model.position.copy(detectedPlane.position);
+                }
+                
+                model.visible = true;
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function showUnsupported(message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('unsupported').style.display = 'flex';
+            document.getElementById('unsupported').querySelector('p').textContent = message;
+        }
+    </script>
+</body>
+</html>
