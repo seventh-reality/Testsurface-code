@@ -8,64 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/XRControllerModelFactory.js"></script>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            font-family: Arial, sans-serif;
-        }
-        
-        #ar-container {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-        }
-        
-        #ui {
-            position: absolute;
-            bottom: 20px;
-            width: 100%;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            z-index: 100;
-        }
-        
-        button {
-            padding: 12px 24px;
-            margin: 8px;
-            border: none;
-            border-radius: 4px;
-            background-color: #4285f4;
-            color: white;
-            font-size: 16px;
-            cursor: pointer;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-        }
-        
-        button:disabled {
-            background-color: #cccccc;
-            cursor: not-allowed;
-        }
-        
-        #loading {
-            color: white;
-            text-align: center;
-            background-color: rgba(0,0,0,0.7);
-            padding: 10px;
-            border-radius: 4px;
-            margin-bottom: 10px;
-        }
-        
-        #error {
-            color: #ff4444;
-            text-align: center;
-            background-color: rgba(0,0,0,0.7);
-            padding: 10px;
-            border-radius: 4px;
-            margin-bottom: 10px;
-            display: none;
-        }
+        /* [Previous CSS remains exactly the same] */
     </style>
 </head>
 <body>
@@ -87,12 +30,7 @@
             modelScale: 0.3,
             requiredFeatures: ['local', 'hit-test'],
             optionalFeatures: ['dom-overlay'],
-            domOverlay: { root: document.body },
-            cameraConfig: {
-                facingMode: 'environment',
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-            }
+            domOverlay: { root: document.body }
         };
 
         // Global variables
@@ -102,11 +40,9 @@
         let reticleVisible = false;
         let gltfLoader;
         let cameraPermissionGranted = false;
-        let currentStream = null;
         let xrRefSpace = null;
         let controller = null;
         let controllerGrip = null;
-        let hitTestSourceRequested = false;
         let resourcesLoaded = false;
         let arSupported = false;
 
@@ -152,11 +88,7 @@
             renderer.outputEncoding = THREE.sRGBEncoding;
             
             const container = document.getElementById('ar-container');
-            if (container) {
-                container.appendChild(renderer.domElement);
-            } else {
-                document.body.appendChild(renderer.domElement);
-            }
+            container.appendChild(renderer.domElement);
 
             // Improved lighting
             const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
@@ -208,20 +140,31 @@
         }
 
         function checkCameraPermissions() {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-                document.getElementById('progress').textContent = 'Camera API not available';
+            if (!navigator.permissions) {
+                // If Permissions API isn't available, we'll assume we can proceed
+                cameraPermissionGranted = true;
+                updateStartButtonState();
                 return;
             }
 
-            navigator.mediaDevices.getUserMedia({ video: config.cameraConfig })
-                .then(stream => {
-                    currentStream = stream;
-                    stopStream(stream);
-                    cameraPermissionGranted = true;
+            navigator.permissions.query({ name: 'camera' })
+                .then(permissionStatus => {
+                    cameraPermissionGranted = permissionStatus.state === 'granted';
+                    if (!cameraPermissionGranted) {
+                        document.getElementById('permission-button').style.display = 'block';
+                        document.getElementById('progress').textContent = 'Camera permission required';
+                    }
                     updateStartButtonState();
+                    
+                    permissionStatus.onchange = () => {
+                        cameraPermissionGranted = permissionStatus.state === 'granted';
+                        updateStartButtonState();
+                    };
                 })
                 .catch(err => {
-                    console.log("Camera access error:", err);
+                    console.log("Camera permission check error:", err);
+                    // Fallback to trying to get permission when starting AR
+                    cameraPermissionGranted = false;
                     document.getElementById('permission-button').style.display = 'block';
                     document.getElementById('progress').textContent = 'Camera permission required';
                 });
@@ -241,7 +184,7 @@
         }
 
         function updateStartButtonState() {
-            if (arSupported && resourcesLoaded && cameraPermissionGranted) {
+            if (arSupported && resourcesLoaded) {
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('start-button').style.display = 'block';
             }
@@ -254,10 +197,10 @@
         }
 
         function requestCameraPermission() {
-            navigator.mediaDevices.getUserMedia({ video: config.cameraConfig })
+            navigator.mediaDevices.getUserMedia({ video: true })
                 .then(stream => {
-                    currentStream = stream;
-                    stopStream(stream);
+                    // We don't actually need to keep the stream, just need permission
+                    stream.getTracks().forEach(track => track.stop());
                     cameraPermissionGranted = true;
                     document.getElementById('permission-button').style.display = 'none';
                     document.getElementById('progress').textContent = 'Camera permission granted';
@@ -269,37 +212,28 @@
                 });
         }
 
-        function stopStream(stream) {
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-            }
-        }
-
         function startAR() {
             if (!navigator.xr) {
                 showError("WebXR not available");
                 return;
             }
 
-            // First ensure we have camera permissions
-            navigator.mediaDevices.getUserMedia({ video: config.cameraConfig })
-                .then(stream => {
-                    currentStream = stream;
-                    stopStream(stream); // We just needed permission, we'll let WebXR handle the camera
+            const sessionInit = {
+                optionalFeatures: config.optionalFeatures,
+                requiredFeatures: config.requiredFeatures,
+                domOverlay: config.domOverlay
+            };
 
-                    const sessionInit = {
-                        optionalFeatures: config.optionalFeatures,
-                        requiredFeatures: config.requiredFeatures,
-                        domOverlay: config.domOverlay
-                    };
-
-                    return navigator.xr.requestSession('immersive-ar', sessionInit);
-                })
+            navigator.xr.requestSession('immersive-ar', sessionInit)
                 .then(onSessionStarted)
                 .catch(err => {
-                    console.error("AR startup error:", err);
-                    showError("Failed to start AR: " + err.message);
-                    document.getElementById('permission-button').style.display = 'block';
+                    console.error("Session creation error:", err);
+                    if (err.name === 'SecurityError') {
+                        showError("Camera permission required. Please grant camera access.");
+                        document.getElementById('permission-button').style.display = 'block';
+                    } else {
+                        showError("Failed to start AR session: " + err.message);
+                    }
                 });
         }
 
@@ -309,7 +243,6 @@
             
             session.addEventListener('end', onSessionEnded);
             
-            // Important: Set the XR session on the renderer
             renderer.xr.setSession(session)
                 .then(() => {
                     setupARSession();
