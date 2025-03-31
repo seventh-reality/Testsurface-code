@@ -281,17 +281,25 @@
                 return;
             }
 
-            const sessionInit = {
-                optionalFeatures: config.optionalFeatures,
-                requiredFeatures: config.requiredFeatures,
-                domOverlay: config.domOverlay
-            };
+            // First ensure we have camera permissions
+            navigator.mediaDevices.getUserMedia({ video: config.cameraConfig })
+                .then(stream => {
+                    currentStream = stream;
+                    stopStream(stream); // We just needed permission, we'll let WebXR handle the camera
 
-            navigator.xr.requestSession('immersive-ar', sessionInit)
+                    const sessionInit = {
+                        optionalFeatures: config.optionalFeatures,
+                        requiredFeatures: config.requiredFeatures,
+                        domOverlay: config.domOverlay
+                    };
+
+                    return navigator.xr.requestSession('immersive-ar', sessionInit);
+                })
                 .then(onSessionStarted)
                 .catch(err => {
-                    console.error("Session creation error:", err);
-                    showError("Failed to start AR session: " + err.message);
+                    console.error("AR startup error:", err);
+                    showError("Failed to start AR: " + err.message);
+                    document.getElementById('permission-button').style.display = 'block';
                 });
         }
 
@@ -301,9 +309,9 @@
             
             session.addEventListener('end', onSessionEnded);
             
+            // Important: Set the XR session on the renderer
             renderer.xr.setSession(session)
                 .then(() => {
-                    // Session setup complete
                     setupARSession();
                 })
                 .catch(err => {
@@ -320,7 +328,7 @@
             xrSession.requestReferenceSpace('local').then(refSpace => {
                 xrRefSpace = refSpace;
                 
-                // Request a hit test source
+                // Request a hit test source for surface detection
                 xrSession.requestReferenceSpace('viewer').then(viewerRefSpace => {
                     xrSession.requestHitTestSource({ space: viewerRefSpace }).then(source => {
                         hitTestSource = source;
@@ -366,7 +374,7 @@
         function onXRFrame(time, frame) {
             if (!xrSession || !frame) return;
             
-            const session = frame.session;
+            // Get the pose of the device relative to the reference space
             const pose = frame.getViewerPose(xrRefSpace);
             
             if (pose && hitTestSource) {
