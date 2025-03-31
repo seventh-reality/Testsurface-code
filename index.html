@@ -69,7 +69,6 @@
     </style>
 </head>
 <body>
-    <!-- Add the container element that the JavaScript expects -->
     <div id="ar-container"></div>
     
     <div id="ui">
@@ -117,18 +116,17 @@
         function init() {
             setupScene();
             
-            // Initialize loadingManager and gltfLoader together
             const loadingManager = new THREE.LoadingManager(
-                () => { // onLoad callback
+                () => {
                     resourcesLoaded = true;
                     document.getElementById('progress').textContent = 'Ready to start AR';
                     updateStartButtonState();
                 },
-                (url, itemsLoaded, itemsTotal) => { // onProgress callback
+                (url, itemsLoaded, itemsTotal) => {
                     const progress = Math.round(itemsLoaded / itemsTotal * 100);
                     document.getElementById('progress').textContent = `Loading ${progress}%`;
                 },
-                (url) => { // onError callback
+                (url) => {
                     document.getElementById('progress').textContent = `Error loading ${url}`;
                 }
             );
@@ -153,12 +151,10 @@
             renderer.xr.enabled = true;
             renderer.outputEncoding = THREE.sRGBEncoding;
             
-            // Get the container element that we added to the HTML
             const container = document.getElementById('ar-container');
             if (container) {
                 container.appendChild(renderer.domElement);
             } else {
-                console.error("AR container not found");
                 document.body.appendChild(renderer.domElement);
             }
 
@@ -245,7 +241,7 @@
         }
 
         function updateStartButtonState() {
-            if (arSupported && resourcesLoaded) {
+            if (arSupported && resourcesLoaded && cameraPermissionGranted) {
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('start-button').style.display = 'block';
             }
@@ -295,7 +291,7 @@
                 .then(onSessionStarted)
                 .catch(err => {
                     console.error("Session creation error:", err);
-                    showError("Failed to start AR session");
+                    showError("Failed to start AR session: " + err.message);
                 });
         }
 
@@ -305,10 +301,15 @@
             
             session.addEventListener('end', onSessionEnded);
             
-            renderer.xr.setSession(session);
-            
-            // Setup AR session
-            setupARSession();
+            renderer.xr.setSession(session)
+                .then(() => {
+                    // Session setup complete
+                    setupARSession();
+                })
+                .catch(err => {
+                    console.error("Error setting XR session:", err);
+                    showError("Error starting AR session");
+                });
             
             // Start the render loop
             renderer.setAnimationLoop(onXRFrame);
@@ -323,13 +324,19 @@
                 xrSession.requestReferenceSpace('viewer').then(viewerRefSpace => {
                     xrSession.requestHitTestSource({ space: viewerRefSpace }).then(source => {
                         hitTestSource = source;
+                    }).catch(err => {
+                        console.error("Hit test source error:", err);
                     });
+                }).catch(err => {
+                    console.error("Viewer reference space error:", err);
                 });
                 
-                // Set up controller
+                // Set up controller if available
                 if (xrSession.inputSources && xrSession.inputSources.length > 0) {
                     setupController(xrSession.inputSources[0]);
                 }
+            }).catch(err => {
+                console.error("Reference space error:", err);
             });
         }
 
@@ -347,7 +354,7 @@
         }
 
         function onSelectStart() {
-            if (model && reticleVisible) {
+            if (model && reticleVisible && !modelPlaced) {
                 modelPlaced = true;
             }
         }
@@ -357,7 +364,7 @@
         }
 
         function onXRFrame(time, frame) {
-            if (!xrSession) return;
+            if (!xrSession || !frame) return;
             
             const session = frame.session;
             const pose = frame.getViewerPose(xrRefSpace);
@@ -377,7 +384,7 @@
                         }
                     }
                 } else {
-                    if (model) model.visible = false;
+                    if (model && !modelPlaced) model.visible = false;
                     reticleVisible = false;
                 }
             }
@@ -396,7 +403,10 @@
             
             // Reset model placement
             modelPlaced = false;
-            if (model) model.visible = false;
+            if (model) {
+                model.visible = false;
+                model.position.set(0, 0, 0);
+            }
         }
     </script>
 </body>
