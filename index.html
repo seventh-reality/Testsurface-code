@@ -263,248 +263,248 @@
         <div class="color-option" id="silver"></div>
     </div>
 
-    <script type="module">
-        // Import required libraries
-        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.module.js';
-        import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.132.2/examples/jsm/loaders/GLTFLoader.js';
-        import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.132.2/examples/jsm/webxr/ARButton.js';
+    <!-- Import Three.js from CDN with proper module specifiers -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/webxr/ARButton.js"></script>
 
-        class ARExperience {
-            constructor() {
-                this.renderer = null;
-                this.scene = null;
-                this.camera = null;
-                this.model = null;
-                this.controller = null;
-                this.reticle = null;
-                this.hitTestSource = null;
-                self = this;
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            class ARExperience {
+                constructor() {
+                    this.renderer = null;
+                    this.scene = null;
+                    this.camera = null;
+                    this.model = null;
+                    this.controller = null;
+                    this.reticle = null;
+                    this.hitTestSource = null;
+                    this.clock = new THREE.Clock();
+                    
+                    this.modelPlaced = false;
+                    this.initialized = false;
+                    
+                    // UI elements
+                    this.moveInstruction = document.getElementById('move-instruction');
+                    this.placeButton = document.getElementById('tap-to-place');
+                    this.transformControls = document.getElementById('transform-controls');
+                    this.colorControls = document.getElementById('color-controls');
+                    
+                    this.init();
+                }
                 
-                this.modelPlaced = false;
-                this.initialized = false;
+                async init() {
+                    try {
+                        // Check if WebXR is available
+                        if (!navigator.xr) {
+                            throw new Error('WebXR not supported');
+                        }
+                        
+                        // Initialize Three.js renderer
+                        this.renderer = new THREE.WebGLRenderer({ 
+                            canvas: document.getElementById('renderCanvas'),
+                            antialias: true,
+                            alpha: true
+                        });
+                        this.renderer.setPixelRatio(window.devicePixelRatio);
+                        this.renderer.setSize(window.innerWidth, window.innerHeight);
+                        this.renderer.xr.enabled = true;
+                        
+                        // Create scene
+                        this.scene = new THREE.Scene();
+                        
+                        // Create camera
+                        this.camera = new THREE.PerspectiveCamera(
+                            70, 
+                            window.innerWidth / window.innerHeight, 
+                            0.1, 
+                            1000
+                        );
+                        
+                        // Add lights
+                        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+                        this.scene.add(ambientLight);
+                        
+                        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                        directionalLight.position.set(1, 1, 1);
+                        this.scene.add(directionalLight);
+                        
+                        // Add controller
+                        this.controller = this.renderer.xr.getController(0);
+                        this.scene.add(this.controller);
+                        
+                        // Create reticle for placement
+                        this.reticle = new THREE.Mesh(
+                            new THREE.RingGeometry(0.1, 0.2, 32).rotateX(-Math.PI / 2),
+                            new THREE.MeshBasicMaterial({ color: 0xffffff })
+                        );
+                        this.reticle.matrixAutoUpdate = false;
+                        this.reticle.visible = false;
+                        this.scene.add(this.reticle);
+                        
+                        // Load 3D model
+                        const loader = new THREE.GLTFLoader();
+                        loader.load(
+                            'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/LittlestTokyo.glb',
+                            (gltf) => {
+                                this.model = gltf.scene;
+                                this.model.scale.set(0.5, 0.5, 0.5);
+                                this.model.visible = false;
+                                this.scene.add(this.model);
+                                
+                                // Set up animations if any
+                                this.mixer = new THREE.AnimationMixer(this.model);
+                                gltf.animations.forEach((clip) => {
+                                    this.mixer.clipAction(clip).play();
+                                });
+                                
+                                this.initialized = true;
+                            },
+                            undefined,
+                            (error) => {
+                                console.error('Error loading model:', error);
+                            }
+                        );
+                        
+                        // Set up WebXR session
+                        document.body.appendChild(THREE.ARButton.createButton(this.renderer, { 
+                            requiredFeatures: ['hit-test'],
+                            optionalFeatures: ['dom-overlay'],
+                            domOverlay: { root: document.body }
+                        }));
+                        
+                        // Handle window resize
+                        window.addEventListener('resize', this.onWindowResize.bind(this));
+                        
+                        // Start animation loop
+                        this.renderer.setAnimationLoop(this.render.bind(this));
+                        
+                        // Show move instruction after a short delay
+                        setTimeout(() => {
+                            this.moveInstruction.style.display = 'block';
+                        }, 2000);
+                        
+                    } catch (error) {
+                        console.error('AR initialization error:', error);
+                        document.getElementById('error-title').textContent = 'AR Not Supported';
+                        document.getElementById('error-message').textContent = 'Your device or browser does not support AR features. Please try on a compatible device.';
+                        document.getElementById('error-screen').style.display = 'flex';
+                        document.getElementById('loading-screen').style.display = 'none';
+                    }
+                }
                 
-                // UI elements
-                this.moveInstruction = document.getElementById('move-instruction');
-                this.placeButton = document.getElementById('tap-to-place');
-                this.transformControls = document.getElementById('transform-controls');
-                this.colorControls = document.getElementById('color-controls');
+                async onSessionStart(session) {
+                    session.addEventListener('end', this.onSessionEnd.bind(this));
+                    
+                    // Configure the GL layer and get the WebGL context
+                    this.renderer.xr.setSession(session);
+                    
+                    // Request a reference space
+                    const referenceSpace = await session.requestReferenceSpace('local');
+                    
+                    // Request a hit test source
+                    const viewerSpace = await session.requestReferenceSpace('viewer');
+                    this.hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+                    
+                    // Set up frame loop
+                    session.requestAnimationFrame(this.onXRFrame.bind(this, referenceSpace));
+                }
                 
-                this.init();
-            }
-            
-            async init() {
-                try {
-                    // Check if WebXR is available
-                    if (!navigator.xr) {
-                        throw new Error('WebXR not supported');
+                onSessionEnd() {
+                    this.hitTestSource = null;
+                }
+                
+                onXRFrame(referenceSpace, time, frame) {
+                    const session = frame.session;
+                    const pose = frame.getViewerPose(referenceSpace);
+                    
+                    if (pose) {
+                        const view = pose.views[0];
+                        
+                        // Update camera position and orientation
+                        const viewport = session.renderState.baseLayer.getViewport(view);
+                        this.renderer.setSize(viewport.width, viewport.height);
+                        
+                        this.camera.matrix.fromArray(view.transform.matrix);
+                        this.camera.projectionMatrix.fromArray(view.projectionMatrix);
+                        this.camera.updateMatrixWorld(true);
+                        
+                        // Handle hit test
+                        const hitTestResults = frame.getHitTestResults(this.hitTestSource);
+                        
+                        if (hitTestResults.length > 0) {
+                            const hit = hitTestResults[0];
+                            const hitMatrix = new THREE.Matrix4().fromArray(hit.getPose(referenceSpace).transform.matrix);
+                            
+                            // Update reticle position
+                            this.reticle.visible = true;
+                            this.reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
+                            
+                            // Update model position if not placed yet
+                            if (this.model && this.initialized && !this.modelPlaced) {
+                                this.model.visible = true;
+                                this.model.position.setFromMatrixPosition(hitMatrix);
+                                
+                                // Show placement button
+                                this.placeButton.style.display = 'block';
+                            }
+                        } else {
+                            this.reticle.visible = false;
+                        }
                     }
                     
-                    // Initialize Three.js renderer
-                    this.renderer = new THREE.WebGLRenderer({ 
-                        canvas: document.getElementById('renderCanvas'),
-                        antialias: true,
-                        alpha: true
-                    });
-                    this.renderer.setPixelRatio(window.devicePixelRatio);
-                    this.renderer.setSize(window.innerWidth, window.innerHeight);
-                    this.renderer.xr.enabled = true;
-                    
-                    // Create scene
-                    this.scene = new THREE.Scene();
-                    
-                    // Create camera
-                    this.camera = new THREE.PerspectiveCamera(
-                        70, 
-                        window.innerWidth / window.innerHeight, 
-                        0.1, 
-                        1000
-                    );
-                    
-                    // Add lights
-                    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-                    this.scene.add(ambientLight);
-                    
-                    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-                    directionalLight.position.set(1, 1, 1);
-                    this.scene.add(directionalLight);
-                    
-                    // Add controller
-                    this.controller = this.renderer.xr.getController(0);
-                    this.scene.add(this.controller);
-                    
-                    // Create reticle for placement
-                    this.reticle = new THREE.Mesh(
-                        new THREE.RingGeometry(0.1, 0.2, 32).rotateX(-Math.PI / 2),
-                        new THREE.MeshBasicMaterial({ color: 0xffffff })
-                    );
-                    this.reticle.matrixAutoUpdate = false;
-                    this.reticle.visible = false;
-                    this.scene.add(this.reticle);
-                    
-                    // Load 3D model
-                    const loader = new GLTFLoader();
-                    loader.load(
-                        'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/LittlestTokyo.glb',
-                        (gltf) => {
-                            this.model = gltf.scene;
-                            this.model.scale.set(0.5, 0.5, 0.5);
-                            this.model.visible = false;
-                            this.scene.add(this.model);
-                            
-                            // Set up animations if any
-                            this.mixer = new THREE.AnimationMixer(this.model);
-                            gltf.animations.forEach((clip) => {
-                                this.mixer.clipAction(clip).play();
-                            });
-                            
-                            this.initialized = true;
-                        },
-                        undefined,
-                        (error) => {
-                            console.error('Error loading model:', error);
-                        }
-                    );
-                    
-                    // Set up WebXR session
-                    document.body.appendChild(ARButton.createButton(this.renderer, { 
-                        requiredFeatures: ['hit-test'],
-                        optionalFeatures: ['dom-overlay'],
-                        domOverlay: { root: document.body }
-                    }));
-                    
-                    // Handle window resize
-                    window.addEventListener('resize', this.onWindowResize.bind(this));
-                    
-                    // Start animation loop
-                    this.renderer.setAnimationLoop(this.render.bind(this));
-                    
-                    // Show move instruction after a short delay
-                    setTimeout(() => {
-                        this.moveInstruction.style.display = 'block';
-                    }, 2000);
-                    
-                } catch (error) {
-                    console.error('AR initialization error:', error);
-                    document.getElementById('error-title').textContent = 'AR Not Supported';
-                    document.getElementById('error-message').textContent = 'Your device or browser does not support AR features. Please try on a compatible device.';
-                    document.getElementById('error-screen').style.display = 'flex';
-                    document.getElementById('loading-screen').style.display = 'none';
+                    // Update animations
+                    if (this.mixer) {
+                        this.mixer.update(this.clock.getDelta());
+                    }
                 }
-            }
-            
-            async onSessionStart(session) {
-                session.addEventListener('end', this.onSessionEnd.bind(this));
                 
-                // Configure the GL layer and get the WebGL context
-                this.renderer.xr.setSession(session);
+                render() {
+                    this.renderer.render(this.scene, this.camera);
+                }
                 
-                // Request a reference space
-                const referenceSpace = await session.requestReferenceSpace('local');
+                onWindowResize() {
+                    this.camera.aspect = window.innerWidth / window.innerHeight;
+                    this.camera.updateProjectionMatrix();
+                    this.renderer.setSize(window.innerWidth, window.innerHeight);
+                }
                 
-                // Request a hit test source
-                const viewerSpace = await session.requestReferenceSpace('viewer');
-                this.hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-                
-                // Set up frame loop
-                session.requestAnimationFrame(this.onXRFrame.bind(this, referenceSpace));
-            }
-            
-            onSessionEnd() {
-                this.hitTestSource = null;
-            }
-            
-            onXRFrame(referenceSpace, time, frame) {
-                const session = frame.session;
-                const pose = frame.getViewerPose(referenceSpace);
-                
-                if (pose) {
-                    const view = pose.views[0];
-                    
-                    // Update camera position and orientation
-                    const viewport = session.renderState.baseLayer.getViewport(view);
-                    this.renderer.setSize(viewport.width, viewport.height);
-                    
-                    this.camera.matrix.fromArray(view.transform.matrix);
-                    this.camera.projectionMatrix.fromArray(view.projectionMatrix);
-                    this.camera.updateMatrixWorld(true);
-                    
-                    // Handle hit test
-                    const hitTestResults = frame.getHitTestResults(this.hitTestSource);
-                    
-                    if (hitTestResults.length > 0) {
-                        const hit = hitTestResults[0];
-                        const hitMatrix = new THREE.Matrix4().fromArray(hit.getPose(referenceSpace).transform.matrix);
+                placeModel() {
+                    if (this.model && !this.modelPlaced) {
+                        this.modelPlaced = true;
+                        this.placeButton.style.display = 'none';
+                        this.moveInstruction.style.display = 'none';
+                        this.transformControls.style.display = 'block';
                         
-                        // Update reticle position
-                        this.reticle.visible = true;
-                        this.reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
-                        
-                        // Update model position if not placed yet
-                        if (this.model && this.initialized && !this.modelPlaced) {
-                            this.model.visible = true;
-                            this.model.position.setFromMatrixPosition(hitMatrix);
-                            
-                            // Show placement button
-                            this.placeButton.style.display = 'block';
-                        }
-                    } else {
+                        // Hide reticle after placement
                         this.reticle.visible = false;
                     }
                 }
                 
-                // Update animations
-                if (this.mixer) {
-                    this.mixer.update(this.clock.getDelta());
+                scaleModel(value) {
+                    if (this.model) {
+                        this.model.scale.set(value, value, value);
+                    }
+                }
+                
+                rotateModel(value) {
+                    if (this.model) {
+                        this.model.rotation.y = value;
+                    }
+                }
+                
+                changeModelColor(color) {
+                    if (this.model) {
+                        this.model.traverse((child) => {
+                            if (child.isMesh) {
+                                child.material.color.setHex(color);
+                            }
+                        });
+                    }
                 }
             }
-            
-            render() {
-                this.renderer.render(this.scene, this.camera);
-            }
-            
-            onWindowResize() {
-                this.camera.aspect = window.innerWidth / window.innerHeight;
-                this.camera.updateProjectionMatrix();
-                this.renderer.setSize(window.innerWidth, window.innerHeight);
-            }
-            
-            placeModel() {
-                if (this.model && !this.modelPlaced) {
-                    this.modelPlaced = true;
-                    this.placeButton.style.display = 'none';
-                    this.moveInstruction.style.display = 'none';
-                    this.transformControls.style.display = 'block';
-                    
-                    // Hide reticle after placement
-                    this.reticle.visible = false;
-                }
-            }
-            
-            scaleModel(value) {
-                if (this.model) {
-                    this.model.scale.set(value, value, value);
-                }
-            }
-            
-            rotateModel(value) {
-                if (this.model) {
-                    this.model.rotation.y = value;
-                }
-            }
-            
-            changeModelColor(color) {
-                if (this.model) {
-                    this.model.traverse((child) => {
-                        if (child.isMesh) {
-                            child.material.color.setHex(color);
-                        }
-                    });
-                }
-            }
-        }
 
-        // Initialize the AR experience when the page loads
-        document.addEventListener('DOMContentLoaded', () => {
+            // Initialize the AR experience
             const arExp = new ARExperience();
             
             // Set up UI event listeners
