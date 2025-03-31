@@ -183,10 +183,10 @@
         // Initialize AR experience
         customElements.whenDefined('model-viewer').then(async () => {
             // Create regular video texture
-            videoTexture = modelViewer.createVideoTexture("https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4");
+            videoTexture = modelViewer.createVideoTexture("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4");
             
             // Create green screen video texture (replace with your green screen video)
-            const greenscreenVideoUrl = "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4";
+            const greenscreenVideoUrl = "Tiger.mp4";
             processedVideoTexture = await createProcessedVideoTexture(greenscreenVideoUrl);
 
             modelViewer.addEventListener("load", () => {
