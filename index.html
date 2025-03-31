@@ -2,353 +2,232 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WebXR AR with Surface Tracking</title>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/XRControllerModelFactory.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebAR with Green Screen Video</title>
+    <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
     <style>
-        /* [Previous CSS remains exactly the same] */
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        model-viewer {
+            width: 100%;
+            height: 100vh;
+            background-color: #000;
+        }
+        .controls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 20px;
+            color: white;
+            text-align: center;
+        }
+        select {
+            padding: 8px 15px;
+            border-radius: 10px;
+            margin-top: 5px;
+            background: #333;
+            color: white;
+            border: none;
+        }
     </style>
 </head>
 <body>
-    <div id="ar-container"></div>
-    
-    <div id="ui">
-        <div id="loading">
-            <div id="progress">Initializing...</div>
+    <model-viewer 
+        id="ar-model"
+        camera-controls 
+        touch-action="pan-y" 
+        src="https://modelviewer.dev/shared-assets/models/sphere.glb" 
+        ar 
+        ar-modes="webxr scene-viewer quick-look" 
+        alt="AR with Green Screen Video"
+        xr-environment
+    >
+        <div class="controls">
+            <p>Video Source</p>
+            <select id="video-source">
+                <option value="greenscreen">Green Screen Video</option>
+                <option value="regular">Regular Video</option>
+            </select>
         </div>
-        <div id="error"></div>
-        <button id="start-button" style="display: none;">Start AR Experience</button>
-        <button id="permission-button" style="display: none;">Grant Camera Permission</button>
-    </div>
+    </model-viewer>
 
-    <script>
-        // Configuration
-        const config = {
-            modelUrl: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF/Duck.gltf',
-            modelScale: 0.3,
-            requiredFeatures: ['local', 'hit-test'],
-            optionalFeatures: ['dom-overlay'],
-            domOverlay: { root: document.body }
-        };
+    <script type="module">
+        const modelViewer = document.querySelector("#ar-model");
+        let videoTexture = null;
+        let processedVideoTexture = null;
+        let videoElement = null;
 
-        // Global variables
-        let scene, camera, renderer, xrSession;
-        let hitTestSource = null, model = null;
-        let modelPlaced = false;
-        let reticleVisible = false;
-        let gltfLoader;
-        let cameraPermissionGranted = false;
-        let xrRefSpace = null;
-        let controller = null;
-        let controllerGrip = null;
-        let resourcesLoaded = false;
-        let arSupported = false;
-
-        // Initialize the app
-        init();
-
-        function init() {
-            setupScene();
+        // Green screen processing shader
+        const greenscreenShader = `
+            precision highp float;
+            uniform sampler2D uTexture;
+            varying vec2 vUv;
             
-            const loadingManager = new THREE.LoadingManager(
-                () => {
-                    resourcesLoaded = true;
-                    document.getElementById('progress').textContent = 'Ready to start AR';
-                    updateStartButtonState();
-                },
-                (url, itemsLoaded, itemsTotal) => {
-                    const progress = Math.round(itemsLoaded / itemsTotal * 100);
-                    document.getElementById('progress').textContent = `Loading ${progress}%`;
-                },
-                (url) => {
-                    document.getElementById('progress').textContent = `Error loading ${url}`;
-                }
-            );
-            
-            gltfLoader = new THREE.GLTFLoader(loadingManager);
-            
-            setupEventListeners();
-            checkARSupport();
-        }
-
-        function setupScene() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
-            scene.add(camera);
-
-            renderer = new THREE.WebGLRenderer({ 
-                antialias: true, 
-                alpha: true,
-                powerPreference: "high-performance"
-            });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
-            renderer.outputEncoding = THREE.sRGBEncoding;
-            
-            const container = document.getElementById('ar-container');
-            container.appendChild(renderer.domElement);
-
-            // Improved lighting
-            const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
-            scene.add(ambientLight);
-            
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight.position.set(0, 5, 5);
-            scene.add(directionalLight);
-
-            window.addEventListener('resize', onWindowResize);
-        }
-
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        function setupEventListeners() {
-            document.getElementById('start-button').addEventListener('click', startAR);
-            document.getElementById('permission-button').addEventListener('click', requestCameraPermission);
-        }
-
-        function checkARSupport() {
-            document.getElementById('progress').textContent = 'Checking AR support...';
-            
-            if (!navigator.xr) {
-                showError("WebXR not supported on this device");
-                document.getElementById('start-button').style.display = 'none';
-                return;
-            }
-
-            navigator.xr.isSessionSupported('immersive-ar')
-                .then(supported => {
-                    arSupported = supported;
-                    if (!supported) {
-                        showError("AR not supported on this device");
-                        document.getElementById('start-button').style.display = 'none';
-                    } else {
-                        document.getElementById('progress').textContent = 'AR supported, loading model...';
-                        loadModel();
-                        checkCameraPermissions();
-                    }
-                })
-                .catch(err => {
-                    console.error("WebXR check failed:", err);
-                    showError("Error checking AR support");
-                });
-        }
-
-        function checkCameraPermissions() {
-            if (!navigator.permissions) {
-                // If Permissions API isn't available, we'll assume we can proceed
-                cameraPermissionGranted = true;
-                updateStartButtonState();
-                return;
-            }
-
-            navigator.permissions.query({ name: 'camera' })
-                .then(permissionStatus => {
-                    cameraPermissionGranted = permissionStatus.state === 'granted';
-                    if (!cameraPermissionGranted) {
-                        document.getElementById('permission-button').style.display = 'block';
-                        document.getElementById('progress').textContent = 'Camera permission required';
-                    }
-                    updateStartButtonState();
-                    
-                    permissionStatus.onchange = () => {
-                        cameraPermissionGranted = permissionStatus.state === 'granted';
-                        updateStartButtonState();
-                    };
-                })
-                .catch(err => {
-                    console.log("Camera permission check error:", err);
-                    // Fallback to trying to get permission when starting AR
-                    cameraPermissionGranted = false;
-                    document.getElementById('permission-button').style.display = 'block';
-                    document.getElementById('progress').textContent = 'Camera permission required';
-                });
-        }
-
-        function loadModel() {
-            gltfLoader.load(config.modelUrl, gltf => {
-                model = gltf.scene;
-                model.scale.set(config.modelScale, config.modelScale, config.modelScale);
-                model.visible = false;
-                scene.add(model);
-                updateStartButtonState();
-            }, undefined, error => {
-                console.error("Error loading model:", error);
-                showError("Error loading 3D model");
-            });
-        }
-
-        function updateStartButtonState() {
-            if (arSupported && resourcesLoaded) {
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('start-button').style.display = 'block';
-            }
-        }
-
-        function showError(message) {
-            const errorElement = document.getElementById('error');
-            errorElement.textContent = message;
-            errorElement.style.display = 'block';
-        }
-
-        function requestCameraPermission() {
-            navigator.mediaDevices.getUserMedia({ video: true })
-                .then(stream => {
-                    // We don't actually need to keep the stream, just need permission
-                    stream.getTracks().forEach(track => track.stop());
-                    cameraPermissionGranted = true;
-                    document.getElementById('permission-button').style.display = 'none';
-                    document.getElementById('progress').textContent = 'Camera permission granted';
-                    updateStartButtonState();
-                })
-                .catch(err => {
-                    console.error("Camera permission error:", err);
-                    showError("Failed to get camera permission");
-                });
-        }
-
-        function startAR() {
-            if (!navigator.xr) {
-                showError("WebXR not available");
-                return;
-            }
-
-            const sessionInit = {
-                optionalFeatures: config.optionalFeatures,
-                requiredFeatures: config.requiredFeatures,
-                domOverlay: config.domOverlay
-            };
-
-            navigator.xr.requestSession('immersive-ar', sessionInit)
-                .then(onSessionStarted)
-                .catch(err => {
-                    console.error("Session creation error:", err);
-                    if (err.name === 'SecurityError') {
-                        showError("Camera permission required. Please grant camera access.");
-                        document.getElementById('permission-button').style.display = 'block';
-                    } else {
-                        showError("Failed to start AR session: " + err.message);
-                    }
-                });
-        }
-
-        function onSessionStarted(session) {
-            xrSession = session;
-            document.getElementById('ui').style.display = 'none';
-            
-            session.addEventListener('end', onSessionEnded);
-            
-            renderer.xr.setSession(session)
-                .then(() => {
-                    setupARSession();
-                })
-                .catch(err => {
-                    console.error("Error setting XR session:", err);
-                    showError("Error starting AR session");
-                });
-            
-            // Start the render loop
-            renderer.setAnimationLoop(onXRFrame);
-        }
-
-        function setupARSession() {
-            // Create a reference space of type 'local'
-            xrSession.requestReferenceSpace('local').then(refSpace => {
-                xrRefSpace = refSpace;
+            void main() {
+                vec4 color = texture2D(uTexture, vUv);
                 
-                // Request a hit test source for surface detection
-                xrSession.requestReferenceSpace('viewer').then(viewerRefSpace => {
-                    xrSession.requestHitTestSource({ space: viewerRefSpace }).then(source => {
-                        hitTestSource = source;
-                    }).catch(err => {
-                        console.error("Hit test source error:", err);
-                    });
-                }).catch(err => {
-                    console.error("Viewer reference space error:", err);
-                });
+                // Green screen removal (adjust these values as needed)
+                float greenAmount = color.g;
+                float blueAmount = color.b;
+                float redAmount = color.r;
                 
-                // Set up controller if available
-                if (xrSession.inputSources && xrSession.inputSources.length > 0) {
-                    setupController(xrSession.inputSources[0]);
+                // Chroma key algorithm (adjust threshold as needed)
+                if (greenAmount > 0.8 && blueAmount < 0.4 && redAmount < 0.4) {
+                    discard;
                 }
-            }).catch(err => {
-                console.error("Reference space error:", err);
-            });
-        }
-
-        function setupController(inputSource) {
-            const controllerModelFactory = new XRControllerModelFactory();
-            
-            controller = renderer.xr.getController(0);
-            controller.addEventListener('selectstart', onSelectStart);
-            controller.addEventListener('selectend', onSelectEnd);
-            scene.add(controller);
-            
-            controllerGrip = renderer.xr.getControllerGrip(0);
-            controllerGrip.add(controllerModelFactory.createControllerModel(controllerGrip));
-            scene.add(controllerGrip);
-        }
-
-        function onSelectStart() {
-            if (model && reticleVisible && !modelPlaced) {
-                modelPlaced = true;
+                
+                gl_FragColor = color;
             }
-        }
+        `;
 
-        function onSelectEnd() {
-            // Handle select end if needed
-        }
+        // Create processed video texture with green screen removal
+        async function createProcessedVideoTexture(videoUrl) {
+            if (!videoElement) {
+                videoElement = document.createElement('video');
+                videoElement.src = videoUrl;
+                videoElement.crossOrigin = "anonymous";
+                videoElement.loop = true;
+                videoElement.muted = true;
+                videoElement.playsInline = true;
+                await videoElement.play();
+            }
 
-        function onXRFrame(time, frame) {
-            if (!xrSession || !frame) return;
-            
-            // Get the pose of the device relative to the reference space
-            const pose = frame.getViewerPose(xrRefSpace);
-            
-            if (pose && hitTestSource) {
-                const hitTestResults = frame.getHitTestResults(hitTestSource);
-                if (hitTestResults.length > 0) {
-                    const hit = hitTestResults[0];
-                    const hitPose = hit.getPose(xrRefSpace);
+            const canvas = document.createElement('canvas');
+            canvas.width = 1280;
+            canvas.height = 720;
+            const ctx = canvas.getContext('2d');
+
+            // Create off-screen WebGL context for processing
+            const offscreenCanvas = document.createElement('canvas');
+            offscreenCanvas.width = canvas.width;
+            offscreenCanvas.height = canvas.height;
+            const gl = offscreenCanvas.getContext('webgl');
+
+            if (!gl) {
+                console.error("WebGL not supported for green screen processing");
+                return modelViewer.createVideoTexture(videoUrl);
+            }
+
+            // Setup WebGL program
+            const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+            gl.shaderSource(vertexShader, `
+                attribute vec2 aPosition;
+                varying vec2 vUv;
+                void main() {
+                    vUv = aPosition * 0.5 + 0.5;
+                    gl_Position = vec4(aPosition, 0.0, 1.0);
+                }
+            `);
+            gl.compileShader(vertexShader);
+
+            const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+            gl.shaderSource(fragmentShader, greenscreenShader);
+            gl.compileShader(fragmentShader);
+
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+            gl.useProgram(program);
+
+            // Setup geometry
+            const positionBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+                -1, -1, 1, -1, -1, 1,
+                -1, 1, 1, -1, 1, 1
+            ]), gl.STATIC_DRAW);
+
+            const positionLocation = gl.getAttribLocation(program, "aPosition");
+            gl.enableVertexAttribArray(positionLocation);
+            gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+            // Create texture
+            const texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+            // Animation loop
+            function processFrame() {
+                if (videoElement.readyState >= videoElement.HAVE_ENOUGH_DATA) {
+                    // Draw video to canvas
+                    ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
                     
-                    if (hitPose && model) {
-                        if (!modelPlaced) {
-                            model.visible = true;
-                            model.position.setFromMatrixPosition(hitPose.transform.matrix);
-                            model.quaternion.setFromRotationMatrix(hitPose.transform.matrix);
-                            reticleVisible = true;
-                        }
-                    }
-                } else {
-                    if (model && !modelPlaced) model.visible = false;
-                    reticleVisible = false;
+                    // Update WebGL texture
+                    gl.bindTexture(gl.TEXTURE_2D, texture);
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+                    
+                    // Render processed frame
+                    gl.viewport(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+                    gl.clear(gl.COLOR_BUFFER_BIT);
+                    gl.drawArrays(gl.TRIANGLES, 0, 6);
+                    
+                    // Read pixels back to canvas
+                    gl.readPixels(0, 0, offscreenCanvas.width, offscreenCanvas.height, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(ctx.getImageData(0, 0, canvas.width, canvas.height).data.buffer));
                 }
+                requestAnimationFrame(processFrame);
             }
-            
-            renderer.render(scene, camera);
+            processFrame();
+
+            return canvas;
         }
 
-        function onSessionEnded() {
-            if (xrSession) {
-                xrSession.removeEventListener('end', onSessionEnded);
-                xrSession = null;
-            }
+        // Initialize AR experience
+        customElements.whenDefined('model-viewer').then(async () => {
+            // Create regular video texture
+            videoTexture = modelViewer.createVideoTexture("https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4");
             
-            document.getElementById('ui').style.display = 'block';
-            renderer.setAnimationLoop(null);
-            
-            // Reset model placement
-            modelPlaced = false;
-            if (model) {
-                model.visible = false;
-                model.position.set(0, 0, 0);
+            // Create green screen video texture (replace with your green screen video)
+            const greenscreenVideoUrl = "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4";
+            processedVideoTexture = await createProcessedVideoTexture(greenscreenVideoUrl);
+
+            modelViewer.addEventListener("load", () => {
+                const material = modelViewer.model.materials[0];
+                const { baseColorTexture } = material.pbrMetallicRoughness;
+                
+                // Set initial texture
+                baseColorTexture.setTexture(processedVideoTexture);
+
+                // Handle video source change
+                document.querySelector('#video-source').addEventListener('change', (event) => {
+                    if (event.target.value === "greenscreen") {
+                        baseColorTexture.setTexture(processedVideoTexture);
+                    } else {
+                        baseColorTexture.setTexture(videoTexture);
+                    }
+                });
+            });
+        });
+
+        // Add AR button for iOS
+        document.addEventListener('DOMContentLoaded', () => {
+            if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+                const button = document.createElement('button');
+                button.textContent = 'View in AR';
+                button.style.position = 'fixed';
+                button.style.bottom = '80px';
+                button.style.left = '50%';
+                button.style.transform = 'translateX(-50%)';
+                button.style.padding = '10px 20px';
+                button.style.background = '#4285f4';
+                button.style.color = 'white';
+                button.style.border = 'none';
+                button.style.borderRadius = '20px';
+                button.style.zIndex = '10';
+                button.addEventListener('click', () => {
+                    modelViewer.activateAR();
+                });
+                document.body.appendChild(button);
             }
-        }
+        });
     </script>
 </body>
 </html>
