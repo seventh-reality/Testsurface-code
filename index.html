@@ -63,30 +63,42 @@
         let videoTexture, greenScreenTexture;
 
         async function createVideoTexture(videoUrl) {
-            const video = document.createElement("video");
-            video.src = videoUrl;
-            video.crossOrigin = "anonymous";
-            video.loop = true;
-            video.muted = true;
-            video.playsInline = true;
-            await video.play();
-            return modelViewer.createVideoTexture(video);
+            return new Promise((resolve, reject) => {
+                const video = document.createElement("video");
+                video.src = videoUrl;
+                video.crossOrigin = "anonymous";
+                video.loop = true;
+                video.muted = true;
+                video.playsInline = true;
+
+                video.addEventListener("canplaythrough", async () => {
+                    await video.play();
+                    const texture = modelViewer.createVideoTexture(video);
+                    resolve(texture);
+                });
+
+                video.addEventListener("error", () => reject(`Failed to load video: ${videoUrl}`));
+            });
         }
 
         async function setupTextures() {
-            videoTexture = await createVideoTexture("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4");
-            greenScreenTexture = await createVideoTexture("./Tiger.mp4");
+            try {
+                videoTexture = await createVideoTexture("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4");
+                greenScreenTexture = await createVideoTexture("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4"); // Replace with a correct URL
 
-            modelViewer.addEventListener("load", () => {
-                const material = modelViewer.model.materials[0];
-                const { baseColorTexture } = material.pbrMetallicRoughness;
+                modelViewer.addEventListener("load", () => {
+                    const material = modelViewer.model.materials[0];
+                    const { baseColorTexture } = material.pbrMetallicRoughness;
+                    baseColorTexture.setTexture(greenScreenTexture); // Default to green screen
 
-                baseColorTexture.setTexture(greenScreenTexture); // Default to green screen video
-
-                document.querySelector('#video-source').addEventListener('change', (event) => {
-                    baseColorTexture.setTexture(event.target.value === "greenscreen" ? greenScreenTexture : videoTexture);
+                    document.querySelector('#video-source').addEventListener('change', (event) => {
+                        baseColorTexture.setTexture(event.target.value === "greenscreen" ? greenScreenTexture : videoTexture);
+                    });
                 });
-            });
+
+            } catch (error) {
+                console.error(error);
+            }
         }
 
         customElements.whenDefined('model-viewer').then(setupTextures);
