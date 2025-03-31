@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WebXR AR with Fixed Loading</title>
+    <title>WebXR AR with Surface Tracking</title>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/XRControllerModelFactory.js"></script>
@@ -238,7 +238,7 @@
         }
 
         function checkCameraPermissions() {
-            navigator.permissions.query({ name: 'camera' })
+            navigator.permissions && navigator.permissions.query({ name: 'camera' })
                 .then(permissionStatus => {
                     if (permissionStatus.state === 'granted') {
                         cameraPermissionGranted = true;
@@ -348,8 +348,8 @@
             if (reticleVisible) {
                 // Place or move the model
                 const reticle = document.getElementById('reticle');
-                const screenX = parseFloat(reticle.style.left) / window.innerWidth * 2 - 1;
-                const screenY = -(parseFloat(reticle.style.top) / window.innerHeight * 2 + 1;
+                const screenX = (parseFloat(reticle.style.left) / window.innerWidth) * 2 - 1;
+                const screenY = -((parseFloat(reticle.style.top) / window.innerHeight) * 2 + 1;
                 
                 const raycaster = new THREE.Raycaster();
                 raycaster.setFromCamera(new THREE.Vector2(screenX, screenY), camera);
