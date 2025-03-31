@@ -35,9 +35,23 @@
             color: white;
             border: none;
         }
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
     </style>
 </head>
 <body>
+    <div id="loading">Loading AR experience...</div>
     <model-viewer 
         id="ar-model"
         camera-controls 
@@ -59,9 +73,11 @@
 
     <script type="module">
         const modelViewer = document.querySelector("#ar-model");
+        const loadingElement = document.querySelector("#loading");
         let videoTexture = null;
         let processedVideoTexture = null;
         let videoElement = null;
+        let processingCanvas = null;
 
         // Green screen processing shader
         const greenscreenShader = `
@@ -78,7 +94,7 @@
                 float redAmount = color.r;
                 
                 // Chroma key algorithm (adjust threshold as needed)
-                if (greenAmount > 0.8 && blueAmount < 0.4 && redAmount < 0.4) {
+                if (greenAmount > max(blueAmount, redAmount) * 1.5 && greenAmount > 0.4) {
                     discard;
                 }
                 
@@ -86,32 +102,76 @@
             }
         `;
 
+        // Helper function to wait for video to be ready
+        function waitForVideoReady(video) {
+            return new Promise((resolve) => {
+                const checkReady = () => {
+                    if (video.readyState >= 2) { // HAVE_CURRENT_DATA
+                        resolve();
+                    } else {
+                        setTimeout(checkReady, 100);
+                    }
+                };
+                checkReady();
+            });
+        }
+
         // Create processed video texture with green screen removal
         async function createProcessedVideoTexture(videoUrl) {
-            if (!videoElement) {
+            try {
                 videoElement = document.createElement('video');
                 videoElement.src = videoUrl;
                 videoElement.crossOrigin = "anonymous";
                 videoElement.loop = true;
                 videoElement.muted = true;
                 videoElement.playsInline = true;
-                await videoElement.play();
+                
+                // iOS requires user interaction to play video
+                if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+                    // Create a transparent overlay to capture user interaction
+                    const overlay = document.createElement('div');
+                    overlay.style.position = 'fixed';
+                    overlay.style.top = '0';
+                    overlay.style.left = '0';
+                    overlay.style.width = '100%';
+                    overlay.style.height = '100%';
+                    overlay.style.zIndex = '1000';
+                    overlay.style.background = 'transparent';
+                    document.body.appendChild(overlay);
+                    
+                    return new Promise((resolve) => {
+                        overlay.addEventListener('click', async () => {
+                            document.body.removeChild(overlay);
+                            await videoElement.play();
+                            resolve(await processVideoFrames());
+                        }, { once: true });
+                    });
+                } else {
+                    await videoElement.play();
+                    return processVideoFrames();
+                }
+            } catch (error) {
+                console.error("Video playback error:", error);
+                loadingElement.textContent = "Error loading video. Please interact with the page.";
+                throw error;
             }
+        }
 
-            const canvas = document.createElement('canvas');
-            canvas.width = 1280;
-            canvas.height = 720;
-            const ctx = canvas.getContext('2d');
+        async function processVideoFrames() {
+            processingCanvas = document.createElement('canvas');
+            processingCanvas.width = 1280;
+            processingCanvas.height = 720;
+            const ctx = processingCanvas.getContext('2d');
 
             // Create off-screen WebGL context for processing
             const offscreenCanvas = document.createElement('canvas');
-            offscreenCanvas.width = canvas.width;
-            offscreenCanvas.height = canvas.height;
+            offscreenCanvas.width = processingCanvas.width;
+            offscreenCanvas.height = processingCanvas.height;
             const gl = offscreenCanvas.getContext('webgl');
 
             if (!gl) {
                 console.error("WebGL not supported for green screen processing");
-                return modelViewer.createVideoTexture(videoUrl);
+                return modelViewer.createVideoTexture(videoElement.src);
             }
 
             // Setup WebGL program
@@ -155,56 +215,59 @@
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
 
-            // Animation loop
-            function processFrame() {
-                if (videoElement.readyState >= videoElement.HAVE_ENOUGH_DATA) {
-                    // Draw video to canvas
-                    ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-                    
-                    // Update WebGL texture
-                    gl.bindTexture(gl.TEXTURE_2D, texture);
-                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
-                    
-                    // Render processed frame
-                    gl.viewport(0, 0, offscreenCanvas.width, offscreenCanvas.height);
-                    gl.clear(gl.COLOR_BUFFER_BIT);
-                    gl.drawArrays(gl.TRIANGLES, 0, 6);
-                    
-                    // Read pixels back to canvas
-                    gl.readPixels(0, 0, offscreenCanvas.width, offscreenCanvas.height, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(ctx.getImageData(0, 0, canvas.width, canvas.height).data.buffer));
-                }
-                requestAnimationFrame(processFrame);
-            }
-            processFrame();
+            // Wait for video to have enough data
+            await waitForVideoReady(videoElement);
 
-            return canvas;
+            // Create initial texture
+            ctx.drawImage(videoElement, 0, 0, processingCanvas.width, processingCanvas.height);
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, processingCanvas);
+
+            // Return a texture that will be updated in the animation loop
+            return processingCanvas;
         }
 
         // Initialize AR experience
         customElements.whenDefined('model-viewer').then(async () => {
-            // Create regular video texture
-            videoTexture = modelViewer.createVideoTexture("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4");
-            
-            // Create green screen video texture (replace with your green screen video)
-            const greenscreenVideoUrl = "./Tiger.mp4";
-            processedVideoTexture = await createProcessedVideoTexture(greenscreenVideoUrl);
-
-            modelViewer.addEventListener("load", () => {
-                const material = modelViewer.model.materials[0];
-                const { baseColorTexture } = material.pbrMetallicRoughness;
+            try {
+                // Create regular video texture
+                videoTexture = modelViewer.createVideoTexture("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4");
                 
-                // Set initial texture
-                baseColorTexture.setTexture(processedVideoTexture);
+                // Create green screen video texture
+                const greenscreenVideoUrl = "Tiger.mp4"; // Replace with your video path
+                processedVideoTexture = await createProcessedVideoTexture(greenscreenVideoUrl);
 
-                // Handle video source change
-                document.querySelector('#video-source').addEventListener('change', (event) => {
-                    if (event.target.value === "greenscreen") {
-                        baseColorTexture.setTexture(processedVideoTexture);
-                    } else {
-                        baseColorTexture.setTexture(videoTexture);
+                modelViewer.addEventListener("load", () => {
+                    loadingElement.style.display = 'none';
+                    const material = modelViewer.model.materials[0];
+                    const { baseColorTexture } = material.pbrMetallicRoughness;
+                    
+                    // Set initial texture
+                    baseColorTexture.setTexture(processedVideoTexture);
+
+                    // Handle video source change
+                    document.querySelector('#video-source').addEventListener('change', (event) => {
+                        if (event.target.value === "greenscreen") {
+                            baseColorTexture.setTexture(processedVideoTexture);
+                        } else {
+                            baseColorTexture.setTexture(videoTexture);
+                        }
+                    });
+
+                    // Animation loop to update processed video
+                    function updateVideoTexture() {
+                        if (videoElement && processingCanvas && videoElement.readyState >= videoElement.HAVE_CURRENT_DATA) {
+                            const ctx = processingCanvas.getContext('2d');
+                            ctx.drawImage(videoElement, 0, 0, processingCanvas.width, processingCanvas.height);
+                        }
+                        requestAnimationFrame(updateVideoTexture);
                     }
+                    updateVideoTexture();
                 });
-            });
+            } catch (error) {
+                console.error("AR initialization error:", error);
+                loadingElement.textContent = "Error initializing AR. Please refresh the page.";
+            }
         });
 
         // Add AR button for iOS
