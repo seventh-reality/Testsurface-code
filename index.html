@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <title>3D Car AR Experience</title>
     <style>
         * {
@@ -263,9 +264,11 @@
         <div class="color-option" id="silver"></div>
     </div>
 
-    <!-- Import Three.js from CDN with proper module specifiers -->
+    <!-- Import Three.js and required components from CDN -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/libs/draco/draco_decoder.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/DRACOLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/webxr/ARButton.js"></script>
 
     <script>
@@ -342,8 +345,14 @@
                         this.reticle.visible = false;
                         this.scene.add(this.reticle);
                         
-                        // Load 3D model
+                        // Load 3D model with DRACO loader
                         const loader = new THREE.GLTFLoader();
+                        
+                        // Set up DRACO decompression
+                        const dracoLoader = new THREE.DRACOLoader();
+                        dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/libs/draco/');
+                        loader.setDRACOLoader(dracoLoader);
+                        
                         loader.load(
                             'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/LittlestTokyo.glb',
                             (gltf) => {
@@ -354,24 +363,36 @@
                                 
                                 // Set up animations if any
                                 this.mixer = new THREE.AnimationMixer(this.model);
-                                gltf.animations.forEach((clip) => {
-                                    this.mixer.clipAction(clip).play();
-                                });
+                                if (gltf.animations && gltf.animations.length) {
+                                    gltf.animations.forEach((clip) => {
+                                        this.mixer.clipAction(clip).play();
+                                    });
+                                }
                                 
                                 this.initialized = true;
                             },
                             undefined,
                             (error) => {
                                 console.error('Error loading model:', error);
+                                document.getElementById('error-title').textContent = 'Model Loading Error';
+                                document.getElementById('error-message').textContent = 'Failed to load 3D model. Please check your internet connection.';
+                                document.getElementById('error-screen').style.display = 'flex';
+                                document.getElementById('loading-screen').style.display = 'none';
                             }
                         );
                         
                         // Set up WebXR session
-                        document.body.appendChild(THREE.ARButton.createButton(this.renderer, { 
+                        const arButton = ARButton.createButton(this.renderer, { 
                             requiredFeatures: ['hit-test'],
                             optionalFeatures: ['dom-overlay'],
                             domOverlay: { root: document.body }
-                        }));
+                        });
+                        
+                        if (!arButton) {
+                            throw new Error('ARButton creation failed');
+                        }
+                        
+                        document.body.appendChild(arButton);
                         
                         // Handle window resize
                         window.addEventListener('resize', this.onWindowResize.bind(this));
@@ -430,26 +451,28 @@
                         this.camera.updateMatrixWorld(true);
                         
                         // Handle hit test
-                        const hitTestResults = frame.getHitTestResults(this.hitTestSource);
-                        
-                        if (hitTestResults.length > 0) {
-                            const hit = hitTestResults[0];
-                            const hitMatrix = new THREE.Matrix4().fromArray(hit.getPose(referenceSpace).transform.matrix);
+                        if (this.hitTestSource) {
+                            const hitTestResults = frame.getHitTestResults(this.hitTestSource);
                             
-                            // Update reticle position
-                            this.reticle.visible = true;
-                            this.reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
-                            
-                            // Update model position if not placed yet
-                            if (this.model && this.initialized && !this.modelPlaced) {
-                                this.model.visible = true;
-                                this.model.position.setFromMatrixPosition(hitMatrix);
+                            if (hitTestResults.length > 0) {
+                                const hit = hitTestResults[0];
+                                const hitMatrix = new THREE.Matrix4().fromArray(hit.getPose(referenceSpace).transform.matrix);
                                 
-                                // Show placement button
-                                this.placeButton.style.display = 'block';
+                                // Update reticle position
+                                this.reticle.visible = true;
+                                this.reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
+                                
+                                // Update model position if not placed yet
+                                if (this.model && this.initialized && !this.modelPlaced) {
+                                    this.model.visible = true;
+                                    this.model.position.setFromMatrixPosition(hitMatrix);
+                                    
+                                    // Show placement button
+                                    this.placeButton.style.display = 'block';
+                                }
+                            } else {
+                                this.reticle.visible = false;
                             }
-                        } else {
-                            this.reticle.visible = false;
                         }
                     }
                     
@@ -475,6 +498,7 @@
                         this.placeButton.style.display = 'none';
                         this.moveInstruction.style.display = 'none';
                         this.transformControls.style.display = 'block';
+                        this.colorControls.style.display = 'block';
                         
                         // Hide reticle after placement
                         this.reticle.visible = false;
@@ -483,13 +507,14 @@
                 
                 scaleModel(value) {
                     if (this.model) {
-                        this.model.scale.set(value, value, value);
+                        const scaleValue = value / 50; // Convert slider value to scale factor
+                        this.model.scale.set(scaleValue, scaleValue, scaleValue);
                     }
                 }
                 
                 rotateModel(value) {
                     if (this.model) {
-                        this.model.rotation.y = value;
+                        this.model.rotation.y = THREE.MathUtils.degToRad(value);
                     }
                 }
                 
@@ -513,11 +538,11 @@
             });
             
             document.getElementById('scale-slider').addEventListener('input', (e) => {
-                arExp.scaleModel(e.target.value / 50); // Scale between 0.4 and 3.0
+                arExp.scaleModel(e.target.value);
             });
             
             document.getElementById('rotation-slider').addEventListener('input', (e) => {
-                arExp.rotateModel(e.target.value * Math.PI / 180);
+                arExp.rotateModel(e.target.value);
             });
             
             // Color options
