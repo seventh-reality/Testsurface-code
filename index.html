@@ -3,369 +3,262 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WebAR SLAM Implementation</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Web AR with SLAM</title>
     <style>
-        body { 
-            margin: 0; 
-            overflow: hidden; 
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
             font-family: Arial, sans-serif;
         }
         #ar-container {
-            position: absolute;
+            position: fixed;
+            top: 0;
+            left: 0;
             width: 100%;
             height: 100%;
+            z-index: 1;
         }
-        #info {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            background: rgba(0,0,0,0.7);
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.8);
             color: white;
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 14px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
             z-index: 100;
         }
         #start-button {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
+            margin-top: 20px;
             padding: 12px 24px;
-            background: #4285f4;
+            background-color: #4CAF50;
             color: white;
             border: none;
-            border-radius: 25px;
+            border-radius: 4px;
             font-size: 16px;
             cursor: pointer;
-            z-index: 100;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        #error-message {
+            color: #ff4444;
+            margin-top: 20px;
+            text-align: center;
+            display: none;
+        }
+        #debug-info {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            background-color: rgba(0,0,0,0.5);
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 10;
+            display: none;
         }
     </style>
 </head>
 <body>
     <div id="ar-container"></div>
-    <div id="info">
-        WebAR SLAM Implementation<br>
-        Waiting for tracking...
+    
+    <div id="loading">
+        <h1>Web AR Experience</h1>
+        <p>Loading AR capabilities...</p>
+        <div id="error-message"></div>
+        <button id="start-button" style="display: none;">Start AR</button>
     </div>
-    <button id="start-button">START AR</button>
+    
+    <div id="debug-info"></div>
 
-    <!-- Load required libraries -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose@0.0.7/dist/handpose.min.js"></script>
-
+    <!-- Import three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Import WebAR.js (a lightweight SLAM implementation) -->
+    <script src="https://raw.githack.com/jeromeetienne/AR.js/master/three.js/build/ar.js"></script>
+    <!-- Import WebXR polyfill for broader device support -->
+    <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js"></script>
+    
     <script>
-        // Main application
-        class WebARSLAM {
-            constructor() {
-                this.container = document.getElementById('ar-container');
-                this.info = document.getElementById('info');
-                this.startButton = document.getElementById('start-button');
-                
-                // Three.js variables
-                this.scene = null;
-                this.camera = null;
-                this.renderer = null;
-                this.controls = null;
-                
-                // AR variables
-                this.session = null;
-                this.referenceSpace = null;
-                this.hitTestSource = null;
-                this.anchors = [];
-                this.trackedPlanes = new Set();
-                
-                // SLAM variables
-                this.featurePoints = [];
-                this.keyframes = [];
-                this.poseHistory = [];
-                this.trackingState = 'NOT_TRACKING';
-                
-                // Initialize
-                this.init();
+        // Global variables
+        let renderer, scene, camera, controller;
+        let arSession = null;
+        let arSource = null;
+        let arView = null;
+        let debugInfo = document.getElementById('debug-info');
+        let loadingScreen = document.getElementById('loading');
+        let errorMessage = document.getElementById('error-message');
+        let startButton = document.getElementById('start-button');
+        
+        // Check for WebXR support
+        function checkXRSupport() {
+            if (!navigator.xr) {
+                errorMessage.textContent = "WebXR not supported in your browser. Try Chrome or Safari on iOS 15+.";
+                errorMessage.style.display = "block";
+                startButton.style.display = "none";
+                return false;
             }
             
-            async init() {
-                // Check for WebXR support
-                if (!navigator.xr) {
-                    this.showError('WebXR not supported in your browser');
-                    return;
+            return navigator.xr.isSessionSupported('immersive-ar').then(supported => {
+                if (!supported) {
+                    errorMessage.textContent = "AR not supported on your device or browser.";
+                    errorMessage.style.display = "block";
+                    startButton.style.display = "none";
+                    return false;
                 }
-                
-                // Initialize Three.js
-                this.initThreeJS();
-                
-                // Set up event listeners
-                this.startButton.addEventListener('click', () => this.startAR());
-                
-                // Load models and prepare scene
-                await this.prepareScene();
-                
-                // Initialize SLAM components
-                this.initSLAM();
-            }
+                return true;
+            }).catch(err => {
+                console.error("Error checking AR support:", err);
+                errorMessage.textContent = "Error checking AR capabilities.";
+                errorMessage.style.display = "block";
+                return false;
+            });
+        }
+        
+        // Initialize the AR scene
+        async function initAR() {
+            // Set up Three.js renderer
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true, 
+                alpha: true 
+            });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.getElementById('ar-container').appendChild(renderer.domElement);
             
-            initThreeJS() {
-                // Create scene
-                this.scene = new THREE.Scene();
-                
-                // Create camera (will be updated by WebXR)
-                this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
-                
-                // Create renderer
-                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-                this.renderer.setPixelRatio(window.devicePixelRatio);
-                this.renderer.setSize(window.innerWidth, window.innerHeight);
-                this.renderer.xr.enabled = true;
-                this.container.appendChild(this.renderer.domElement);
-                
-                // Handle window resize
-                window.addEventListener('resize', () => {
-                    this.camera.aspect = window.innerWidth / window.innerHeight;
-                    this.camera.updateProjectionMatrix();
-                    this.renderer.setSize(window.innerWidth, window.innerHeight);
-                });
-            }
+            // Create scene
+            scene = new THREE.Scene();
             
-            async prepareScene() {
-                // Add ambient light
-                const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
-                this.scene.add(ambientLight);
-                
-                // Add directional light
-                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.3);
-                directionalLight.position.set(1, 1, 1).normalize();
-                this.scene.add(directionalLight);
-                
-                // Load a sample 3D model (optional)
-                try {
-                    const loader = new THREE.GLTFLoader();
-                    // You can replace this with your own model
-                    // const gltf = await loader.loadAsync('pl.glb');
-                    // this.scene.add(gltf.scene);
-                } catch (error) {
-                    console.error('Error loading model:', error);
-                }
-            }
+            // Create camera
+            camera = new THREE.PerspectiveCamera(
+                60, window.innerWidth / window.innerHeight, 
+                0.1, 1000
+            );
             
-            initSLAM() {
-                // This is where we would initialize SLAM-specific components
-                // In a real implementation, this might involve:
-                // - Feature detection models
-                // - Tracking algorithms
-                // - Pose estimation
-                
-                console.log('SLAM components initialized');
-            }
+            // Add light
+            const light = new THREE.AmbientLight(0xffffff, 1.0);
+            scene.add(light);
             
-            async startAR() {
-                this.startButton.style.display = 'none';
-                this.info.textContent = 'Initializing AR...';
-                
-                try {
-                    // Request an AR session
-                    this.session = await navigator.xr.requestSession('immersive-ar', {
-                        requiredFeatures: ['hit-test', 'plane-detection', 'anchors'],
-                        optionalFeatures: ['dom-overlay'],
-                        domOverlay: { root: document.body }
-                    });
-                    
-                    // Set up session event handlers
-                    this.session.addEventListener('end', () => this.onSessionEnd());
-                    
-                    // Initialize WebXR with Three.js
-                    await this.renderer.xr.setSession(this.session);
-                    
-                    // Set up reference space
-                    this.referenceSpace = await this.session.requestReferenceSpace('local');
-                    
-                    // Create another reference space with the origin at the device's initial position
-                    const localFloorRefSpace = await this.session.requestReferenceSpace('local-floor');
-                    
-                    // Initialize hit test
-                    await this.initHitTest(localFloorRefSpace);
-                    
-                    // Initialize plane detection
-                    await this.initPlaneDetection();
-                    
-                    // Start the AR loop
-                    this.renderer.setAnimationLoop(() => this.renderFrame());
-                    
-                    this.info.textContent = 'Move your device to detect surfaces';
-                    this.trackingState = 'TRACKING';
-                    
-                } catch (error) {
-                    this.showError(`AR initialization failed: ${error.message}`);
-                    console.error('AR initialization error:', error);
-                }
-            }
+            // Add directional light
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(0, 1, 0);
+            scene.add(directionalLight);
             
-            async initHitTest(referenceSpace) {
-                // Get the hit test source
-                const viewerSpace = await this.session.requestReferenceSpace('viewer');
-                this.hitTestSource = await this.session.requestHitTestSource({ space: viewerSpace });
-                
-                // Create a reticle for placement
-                this.reticle = new THREE.Mesh(
-                    new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
-                    new THREE.MeshBasicMaterial({ color: 0xffffff })
-                );
-                this.reticle.matrixAutoUpdate = false;
-                this.reticle.visible = false;
-                this.scene.add(this.reticle);
-            }
+            // Add a simple 3D object to test
+            const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+            const material = new THREE.MeshPhongMaterial({ 
+                color: 0x00ff00, 
+                transparent: true, 
+                opacity: 0.8 
+            });
+            const cube = new THREE.Mesh(geometry, material);
+            cube.position.set(0, 0, -0.5);
+            scene.add(cube);
             
-            async initPlaneDetection() {
-                // This enables plane detection in the session
-                if (this.session.updateWorldTrackingState) {
-                    await this.session.updateWorldTrackingState({
-                        planeDetectionState: { enabled: true }
-                    });
-                }
-                
-                // Visualize detected planes (optional)
-                this.planeMeshes = new THREE.Group();
-                this.scene.add(this.planeMeshes);
-            }
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize);
             
-            renderFrame() {
-                // Update info display
-                this.updateTrackingInfo();
-                
-                // Get the XRFrame
-                const frame = this.renderer.xr.getFrame();
-                const referenceSpace = this.renderer.xr.getReferenceSpace();
-                
-                // Perform hit test
-                if (this.hitTestSource && frame) {
-                    const hitTestResults = frame.getHitTestResults(this.hitTestSource);
-                    if (hitTestResults.length > 0) {
-                        const hit = hitTestResults[0];
-                        const pose = hit.getPose(referenceSpace);
-                        
-                        this.reticle.visible = true;
-                        this.reticle.matrix.fromArray(pose.transform.matrix);
-                    } else {
-                        this.reticle.visible = false;
-                    }
-                }
-                
-                // Process detected planes
-                if (frame.detectedPlanes) {
-                    this.processDetectedPlanes(frame, referenceSpace);
-                }
-                
-                // Update SLAM tracking
-                this.updateSLAM(frame, referenceSpace);
-                
-                // Render the scene
-                this.renderer.render(this.scene, this.camera);
-            }
-            
-            processDetectedPlanes(frame, referenceSpace) {
-                // Clear old planes
-                this.planeMeshes.clear();
-                
-                // Process each detected plane
-                for (const plane of frame.detectedPlanes) {
-                    const planePose = frame.getPose(plane.planeSpace, referenceSpace);
-                    if (!planePose) continue;
-                    
-                    // Create a mesh for the plane
-                    const planeMesh = new THREE.Mesh(
-                        new THREE.PlaneGeometry(plane.width, plane.height),
-                        new THREE.MeshBasicMaterial({ 
-                            color: 0x00ff00, 
-                            side: THREE.DoubleSide,
-                            transparent: true,
-                            opacity: 0.5
-                        })
-                    );
-                    
-                    planeMesh.matrix.fromArray(planePose.transform.matrix);
-                    planeMesh.matrixAutoUpdate = false;
-                    this.planeMeshes.add(planeMesh);
-                    
-                    // Track this plane
-                    this.trackedPlanes.add(plane);
-                }
-            }
-            
-            updateSLAM(frame, referenceSpace) {
-                // In a real implementation, this would:
-                // 1. Extract feature points from camera image
-                // 2. Match features with previous frames
-                // 3. Estimate camera pose
-                // 4. Update the 3D map of the environment
-                
-                // For demo purposes, we'll simulate this with a simple state
-                if (frame.getViewerPose(referenceSpace)) {
-                    this.trackingState = 'TRACKING';
-                    
-                    // Simulate feature points
-                    if (Math.random() > 0.7) {
-                        this.featurePoints.push({
-                            position: new THREE.Vector3(
-                                (Math.random() - 0.5) * 5,
-                                (Math.random() - 0.5) * 2,
-                                -Math.random() * 5
-                            )
-                        });
-                    }
-                    
-                    // Limit feature points for performance
-                    if (this.featurePoints.length > 100) {
-                        this.featurePoints.shift();
-                    }
-                } else {
-                    this.trackingState = 'NOT_TRACKING';
-                }
-            }
-            
-            updateTrackingInfo() {
-                let infoText = 'WebAR SLAM Implementation\n';
-                
-                switch (this.trackingState) {
-                    case 'TRACKING':
-                        infoText += 'Tracking: Good\n';
-                        infoText += `Feature Points: ${this.featurePoints.length}\n`;
-                        infoText += `Tracked Planes: ${this.trackedPlanes.size}`;
-                        break;
-                    case 'NOT_TRACKING':
-                        infoText += 'Tracking: Lost\nMove your device slowly';
-                        break;
-                    default:
-                        infoText += 'Tracking: Initializing...';
-                }
-                
-                this.info.textContent = infoText;
-            }
-            
-            onSessionEnd() {
-                this.renderer.setAnimationLoop(null);
-                this.session = null;
-                this.referenceSpace = null;
-                this.hitTestSource = null;
-                this.anchors = [];
-                this.trackedPlanes.clear();
-                this.startButton.style.display = 'block';
-                this.info.textContent = 'AR session ended. Tap START AR to begin again.';
-                this.trackingState = 'NOT_TRACKING';
-            }
-            
-            showError(message) {
-                this.info.textContent = `Error: ${message}`;
-                this.info.style.backgroundColor = 'rgba(255,0,0,0.7)';
+            // Start AR session
+            try {
+                await startARSession();
+            } catch (err) {
+                console.error("Failed to start AR session:", err);
+                errorMessage.textContent = "Failed to start AR. Make sure you're on a supported device.";
+                errorMessage.style.display = "block";
+                loadingScreen.querySelector('p').textContent = "AR initialization failed";
+                startButton.style.display = "block";
+                startButton.onclick = retryAR;
             }
         }
         
-        // Start the application when the page loads
-        window.addEventListener('load', () => {
-            new WebARSLAM();
+        // Start AR session
+        async function startARSession() {
+            if (!navigator.xr) {
+                throw new Error("WebXR not available");
+            }
+            
+            // Request AR session
+            const session = await navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: ['hit-test', 'dom-overlay'],
+                domOverlay: { root: document.body }
+            });
+            
+            session.addEventListener('end', onSessionEnd);
+            
+            // Set up Three.js XR rendering
+            renderer.xr.setReferenceSpaceType('local');
+            await renderer.xr.setSession(session);
+            
+            // Hide loading screen
+            loadingScreen.style.display = "none";
+            debugInfo.style.display = "block";
+            
+            // Start animation loop
+            renderer.setAnimationLoop(onXRFrame);
+        }
+        
+        // Retry AR initialization
+        function retryAR() {
+            loadingScreen.style.display = "flex";
+            errorMessage.style.display = "none";
+            startButton.style.display = "none";
+            loadingScreen.querySelector('p').textContent = "Loading AR capabilities...";
+            initAR();
+        }
+        
+        // Handle XR frame updates
+        function onXRFrame(time, frame) {
+            // Update debug info
+            if (camera) {
+                const pos = camera.position;
+                const rot = camera.rotation;
+                debugInfo.innerHTML = `
+                    Camera Position:<br>
+                    X: ${pos.x.toFixed(2)}<br>
+                    Y: ${pos.y.toFixed(2)}<br>
+                    Z: ${pos.z.toFixed(2)}<br>
+                    Rotation:<br>
+                    X: ${rot.x.toFixed(2)}<br>
+                    Y: ${rot.y.toFixed(2)}<br>
+                    Z: ${rot.z.toFixed(2)}
+                `;
+            }
+            
+            // Render scene
+            renderer.render(scene, camera);
+        }
+        
+        // Handle session end
+        function onSessionEnd() {
+            renderer.setAnimationLoop(null);
+            loadingScreen.style.display = "flex";
+            loadingScreen.querySelector('p').textContent = "AR session ended";
+            startButton.style.display = "block";
+            startButton.onclick = retryAR;
+        }
+        
+        // Handle window resize
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // Initialize when DOM is loaded
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Check for WebXR support
+            const supported = await checkXRSupport();
+            
+            if (supported) {
+                startButton.style.display = "block";
+                startButton.onclick = initAR;
+            }
         });
     </script>
 </body>
