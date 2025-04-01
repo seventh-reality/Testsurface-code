@@ -77,15 +77,6 @@
             border-radius: 5px;
             color: white;
         }
-        #ar-content {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 5;
-            pointer-events: none;
-        }
     </style>
 </head>
 <body>
@@ -114,7 +105,7 @@
     <!-- GLTF loader for 3D models -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <!-- Import WebAR.js for older devices -->
-    <script src="https://raw.githack.com/jeromeetienne/AR.js/master/three.js/build/ar.js"></script>
+    <script src="https://raw.githack.com/jeromeetienne/AR.js/master/three.js/build/ar-nft.js"></script>
     <!-- Import WebXR polyfill -->
     <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js"></script>
     
@@ -128,7 +119,7 @@
         let startButton = document.getElementById('start-button');
         let chromaVideo = document.getElementById('chroma-video');
         let videoTexture, videoMesh;
-        let isLegacyMode = true; // Default to legacy for older iPads
+        let isLegacyMode = true; // Default to legacy for wider compatibility
         let glbModel = null;
 
         // Configuration
@@ -206,9 +197,10 @@
                 renderer = new THREE.WebGLRenderer({ 
                     antialias: true, 
                     alpha: true,
-                    preserveDrawingBuffer: true // For iOS 12 compatibility
+                    preserveDrawingBuffer: true, // For iOS compatibility
+                    powerPreference: "high-performance"
                 });
-                renderer.setPixelRatio(window.devicePixelRatio);
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Limit for performance
                 renderer.setSize(window.innerWidth, window.innerHeight);
                 renderer.autoClear = false;
                 document.getElementById('ar-container').appendChild(renderer.domElement);
@@ -263,7 +255,10 @@
         // Initialize WebAR.js (legacy devices)
         async function initLegacyAR() {
             // Create AR.js camera
-            camera = new THREE.Camera();
+            camera = new THREE.PerspectiveCamera(
+                60, window.innerWidth / window.innerHeight, 
+                0.1, 1000
+            );
             scene.add(camera);
             
             // Create AR.js source
@@ -315,16 +310,12 @@
                 chromaVideo.addEventListener('canplay', onReady);
                 chromaVideo.load();
                 
-                // iOS 12 requires user interaction to play video
-                if (isLegacyMode) {
-                    const playVideo = () => {
-                        chromaVideo.play().catch(e => console.warn("Video play error:", e));
-                        document.removeEventListener('click', playVideo);
-                    };
-                    document.addEventListener('click', playVideo);
-                } else {
+                // iOS requires user interaction to play video
+                const playVideo = () => {
                     chromaVideo.play().catch(e => console.warn("Video play error:", e));
-                }
+                    document.removeEventListener('click', playVideo);
+                };
+                document.addEventListener('click', playVideo);
             });
             
             // Create video texture
@@ -369,6 +360,17 @@
                     config.model.position.y,
                     config.model.position.z
                 );
+                
+                // Simplify materials for better performance on mobile
+                glbModel.traverse(child => {
+                    if (child.isMesh) {
+                        child.material = new THREE.MeshBasicMaterial({ 
+                            color: child.material.color || 0xffffff,
+                            map: child.material.map
+                        });
+                    }
+                });
+                
                 scene.add(glbModel);
             } catch (err) {
                 console.error("Failed to load GLB model:", err);
@@ -382,44 +384,38 @@
                 throw new Error("WebXR not available");
             }
             
-            // Request AR session
-            const session = await navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: ['local', 'hit-test'],
-                optionalFeatures: ['dom-overlay'],
-                domOverlay: { root: document.body }
-            });
-            
-            session.addEventListener('end', onSessionEnd);
-            
-            // Set up Three.js XR rendering
-            renderer.xr.setReferenceSpaceType('local');
-            await renderer.xr.setSession(session);
-            
-            // Hide loading screen
-            loadingScreen.style.display = "none";
-            if (config.debug) debugInfo.style.display = "block";
-            
-            // Start animation loop
-            renderer.setAnimationLoop(onXRFrame);
+            try {
+                // Request AR session
+                const session = await navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['local'],
+                    optionalFeatures: ['dom-overlay', 'hit-test'],
+                    domOverlay: { root: document.body }
+                });
+                
+                session.addEventListener('end', onSessionEnd);
+                
+                // Set up Three.js XR rendering
+                renderer.xr.setReferenceSpaceType('local');
+                await renderer.xr.setSession(session);
+                
+                // Hide loading screen
+                loadingScreen.style.display = "none";
+                if (config.debug) debugInfo.style.display = "block";
+                
+                // Start animation loop
+                renderer.setAnimationLoop(onXRFrame);
+            } catch (err) {
+                console.error("WebXR session error:", err);
+                throw err;
+            }
         }
 
         // Start legacy AR session
         function startLegacyARSession() {
-            // iOS 12 specific fixes
-            if (/OS 12_/.test(navigator.userAgent)) {
+            // iOS specific performance optimizations
+            if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
                 // Reduce rendering quality for better performance
                 renderer.setPixelRatio(1);
-                
-                // Simplify rendering
-                if (glbModel) {
-                    glbModel.traverse(child => {
-                        if (child.isMesh) {
-                            child.material = new THREE.MeshBasicMaterial({ 
-                                color: child.material.color 
-                            });
-                        }
-                    });
-                }
             }
             
             // Hide loading screen
@@ -428,7 +424,7 @@
             
             // Start animation loop
             renderer.setAnimationLoop(() => {
-                if (arSource.ready) {
+                if (arSource && arSource.ready) {
                     arContext.update(arSource.domElement);
                     renderer.clear();
                     renderer.render(scene, camera);
@@ -488,8 +484,10 @@
 
         // Handle window resize
         function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
+            if (camera) {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+            }
             renderer.setSize(window.innerWidth, window.innerHeight);
             
             if (arSource) {
@@ -506,9 +504,16 @@
             loadingScreen.querySelector('p').textContent = "Loading AR capabilities...";
             
             // Clean up previous session
-            if (renderer) {
+            if (renderer && renderer.domElement) {
                 document.getElementById('ar-container').removeChild(renderer.domElement);
             }
+            
+            // Reset variables
+            scene = null;
+            camera = null;
+            renderer = null;
+            arSource = null;
+            arContext = null;
             
             initAR();
         }
@@ -516,7 +521,9 @@
         // Initialize when DOM is loaded
         document.addEventListener('DOMContentLoaded', async () => {
             // Initialize WebXR polyfill
-            new WebXRPolyfill();
+            if (window.WebXRPolyfill) {
+                new WebXRPolyfill();
+            }
             
             // Check capabilities
             const supported = await checkCapabilities();
