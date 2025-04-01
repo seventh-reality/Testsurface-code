@@ -66,9 +66,15 @@
     let hitTestSource = null;
     let hitTestSourceRequested = false;
     let arSession = false;
+    let referenceSpace = null;
 
     // Check for WebXR support
     async function checkXRSupport() {
+      if (!window.isSecureContext) {
+        showUnsupported("WebXR requires a secure context (HTTPS or localhost)");
+        return false;
+      }
+
       if (!navigator.xr) {
         showUnsupported("WebXR not supported in this browser");
         return false;
@@ -99,13 +105,13 @@
     async function init() {
       // Create scene
       scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
 
       // Add lights
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
       scene.add(ambientLight);
 
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
       directionalLight.position.set(0.5, 1, 0.5);
       scene.add(directionalLight);
 
@@ -156,7 +162,8 @@
       try {
         // Request AR session
         const session = await navigator.xr.requestSession('immersive-ar', {
-          requiredFeatures: ['hit-test', 'dom-overlay'],
+          requiredFeatures: ['hit-test'],
+          optionalFeatures: ['dom-overlay'],
           domOverlay: { root: document.body }
         });
         
@@ -167,7 +174,7 @@
       }
     }
 
-    function onSessionStarted(session) {
+    async function onSessionStarted(session) {
       arSession = true;
       document.getElementById('ar-button').style.display = 'none';
       document.getElementById('info').style.display = 'block';
@@ -179,16 +186,20 @@
       hitTestSource = null;
       hitTestSourceRequested = false;
 
+      // Create a reference space
+      referenceSpace = await session.requestReferenceSpace('local');
+
       // Set up animation loop with hit testing
       renderer.setAnimationLoop((time, frame) => {
         if (!frame) return;
 
         // Set up hit testing if not already done
-        if (!hitTestSourceRequested && frame.session && model) {
-          frame.session.requestReferenceSpace('viewer').then((referenceSpace) => {
-            frame.session.requestHitTestSource({ space: referenceSpace }).then((source) => {
-              hitTestSource = source;
-            });
+        if (!hitTestSourceRequested && frame.session) {
+          frame.session.requestHitTestSource({ 
+            space: referenceSpace,
+            entityTypes: ['plane', 'mesh']
+          }).then((source) => {
+            hitTestSource = source;
           }).catch(err => {
             console.error("Hit test failed:", err);
           });
@@ -201,10 +212,12 @@
           const hitTestResults = frame.getHitTestResults(hitTestSource);
           if (hitTestResults.length > 0) {
             const hit = hitTestResults[0];
-            const pose = hit.getPose(renderer.xr.getReferenceSpace());
-            model.position.setFromMatrixPosition(pose.transform.matrix);
-            model.quaternion.setFromRotationMatrix(pose.transform.matrix);
-            model.visible = true;
+            const pose = hit.getPose(referenceSpace);
+            if (pose) {
+              model.position.setFromMatrixPosition(pose.transform.matrix);
+              model.quaternion.setFromRotationMatrix(pose.transform.matrix);
+              model.visible = true;
+            }
           } else {
             model.visible = false;
           }
@@ -220,6 +233,9 @@
       document.getElementById('info').style.display = 'none';
       renderer.xr.setSession(null);
       renderer.setAnimationLoop(null);
+      hitTestSource = null;
+      hitTestSourceRequested = false;
+      referenceSpace = null;
     }
 
     function onWindowResize() {
