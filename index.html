@@ -7,9 +7,7 @@
   <!-- Three.js -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-  <!-- WebXR Polyfill -->
-  <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js"></script>
-  <!-- MindAR for image/surface tracking -->
+  <!-- MindAR with correct URL -->
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.0/dist/mindar-image-three.prod.js"></script>
   <style>
     body { 
@@ -92,34 +90,26 @@
     let model;
     let started = false;
     
-    // Initialize the polyfill for older devices
-    const polyfill = new WebXRPolyfill();
-    
     // Check for AR support
     async function checkARSupport() {
       document.getElementById('loading').style.display = 'block';
       
-      // Check if MindAR is supported
-      if (await checkMindARSupport()) {
+      try {
+        // Check if we can access camera
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(track => track.stop());
+        
+        // Check if MindAR is loaded
+        if (typeof MindARThree === 'undefined') {
+          throw new Error("AR library failed to load");
+        }
+        
         document.getElementById('loading').style.display = 'none';
         document.getElementById('ar-button').style.display = 'block';
         return true;
-      }
-      
-      // No AR support found
-      showUnsupportedMessage("AR not supported on this device");
-      return false;
-    }
-    
-    // Check MindAR support
-    async function checkMindARSupport() {
-      try {
-        // Test if we can access camera
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        stream.getTracks().forEach(track => track.stop());
-        return true;
       } catch (e) {
-        console.log("MindAR check failed:", e);
+        console.error("AR check failed:", e);
+        showUnsupportedMessage("AR not available: " + (e.message || "Camera access denied"));
         return false;
       }
     }
@@ -202,8 +192,9 @@
         // Initialize MindAR with SLAM (surface tracking)
         mindarThree = new MindARThree({
           container: document.getElementById('container'),
-          uiScanning: "#scanning",
           uiLoading: "no",
+          uiScanning: "yes",
+          uiError: "yes",
           filterMinCF: 0.0001,
           filterBeta: 0.001,
           trackingMode: "slam", // Enable SLAM for surface tracking
@@ -221,7 +212,6 @@
         
         // Load model
         const model = await loadModel();
-        scene.add(model);
         
         // Create anchor for surface tracking
         const anchor = mindarThree.addAnchor(0);
@@ -251,7 +241,7 @@
         
       } catch (error) {
         console.error("AR startup failed:", error);
-        showUnsupportedMessage("Failed to start AR: " + error.message);
+        showUnsupportedMessage("Failed to start AR: " + (error.message || "Check console for details"));
         document.getElementById('ar-button').style.display = 'block';
         document.getElementById('loading').style.display = 'none';
         started = false;
