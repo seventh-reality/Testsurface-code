@@ -1,573 +1,67 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="mobile-web-app-capable" content="yes">
-    <title>3D Car AR Experience</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            -webkit-tap-highlight-color: transparent;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            overflow: hidden;
-            touch-action: none;
-            position: fixed;
-            width: 100%;
-            height: 100%;
-        }
-
-        #renderCanvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 1;
-        }
-
-        #loading-screen {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: #000;
-            color: white;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            z-index: 100;
-        }
-
-        #error-screen {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: #000;
-            color: white;
-            display: none;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            text-align: center;
-            padding: 20px;
-            z-index: 200;
-        }
-
-        #error-title {
-            font-size: 24px;
-            margin-bottom: 16px;
-            color: #ff3b30;
-        }
-
-        #error-message {
-            font-size: 16px;
-            margin-bottom: 24px;
-            max-width: 80%;
-        }
-
-        .spinner {
-            width: 40px;
-            height: 40px;
-            border: 4px solid rgba(255, 255, 255, 0.3);
-            border-radius: 50%;
-            border-top-color: #fff;
-            animation: spin 1s ease-in-out infinite;
-            margin-bottom: 20px;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        #tap-to-place {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.7);
-            color: white;
-            border: 2px solid white;
-            border-radius: 30px;
-            padding: 12px 24px;
-            font-size: 16px;
-            z-index: 10;
-            display: none;
-            cursor: pointer;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-        }
-
-        #transform-controls {
-            position: absolute;
-            bottom: 80px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.7);
-            border-radius: 20px;
-            padding: 15px;
-            z-index: 10;
-            display: none;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            width: 90%;
-            max-width: 400px;
-        }
-
-        #color-controls {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.7);
-            border-radius: 20px;
-            padding: 10px;
-            z-index: 10;
-            display: none;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-        }
-
-        .control-group {
-            margin-bottom: 10px;
-        }
-
-        .control-group:last-child {
-            margin-bottom: 0;
-        }
-
-        .control-label {
-            color: white;
-            display: block;
-            margin-bottom: 5px;
-            font-size: 14px;
-        }
-
-        .slider {
-            width: 100%;
-            height: 10px;
-            -webkit-appearance: none;
-            appearance: none;
-            background: rgba(255, 255, 255, 0.2);
-            outline: none;
-            border-radius: 5px;
-        }
-
-        .slider::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background: white;
-            cursor: pointer;
-        }
-
-        .color-option {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            display: inline-block;
-            margin: 0 5px;
-            border: 2px solid transparent;
-            cursor: pointer;
-            transition: transform 0.2s, border-color 0.2s;
-        }
-
-        .color-option:hover, .color-option.active {
-            transform: scale(1.1);
-            border-color: white;
-        }
-
-        #black { background-color: #111111; }
-        #orange { background-color: #ff2600; }
-        #blue { background-color: #0011ff; }
-        #silver { background-color: #ffffff; }
-
-        .instructions {
-            position: absolute;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 10px 15px;
-            border-radius: 20px;
-            font-size: 14px;
-            z-index: 10;
-            text-align: center;
-            max-width: 80%;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            display: none;
-        }
-
-        @media (max-width: 480px) {
-            #transform-controls {
-                bottom: 70px;
-                padding: 10px;
-            }
-            
-            #color-controls {
-                bottom: 15px;
-            }
-            
-            .color-option {
-                width: 35px;
-                height: 35px;
-            }
-        }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MindAR Three.js SLAM Demo</title>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.1.4/dist/mindar-image-three.prod.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #container { position: absolute; width: 100%; height: 100%; }
+  </style>
 </head>
 <body>
-    <canvas id="renderCanvas"></canvas>
-
-    <div id="loading-screen">
-        <div class="spinner"></div>
-        <div>Loading AR experience...</div>
-    </div>
-
-    <div id="error-screen">
-        <div id="error-title">Error</div>
-        <div id="error-message">An error occurred while loading the AR experience.</div>
-    </div>
-
-    <div class="instructions" id="move-instruction">Move your device to detect surfaces</div>
-
-    <button id="tap-to-place">Tap to Place</button>
-
-    <div id="transform-controls">
-        <div class="control-group">
-            <label class="control-label">Scale</label>
-            <input type="range" min="20" max="150" value="50" class="slider" id="scale-slider">
-        </div>
-        <div class="control-group">
-            <label class="control-label">Rotation</label>
-            <input type="range" min="0" max="360" value="0" class="slider" id="rotation-slider">
-        </div>
-    </div>
-
-    <div id="color-controls">
-        <div class="color-option" id="black"></div>
-        <div class="color-option" id="orange"></div>
-        <div class="color-option" id="blue"></div>
-        <div class="color-option" id="silver"></div>
-    </div>
-
-    <!-- Import Three.js and required components from CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/libs/draco/draco_decoder.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/DRACOLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/webxr/ARButton.js"></script>
-
-    <script>
-        // Wait for all scripts to load before initializing
-        window.addEventListener('load', () => {
-            class ARExperience {
-                constructor() {
-                    this.renderer = null;
-                    this.scene = null;
-                    this.camera = null;
-                    this.model = null;
-                    this.controller = null;
-                    this.reticle = null;
-                    this.hitTestSource = null;
-                    this.clock = new THREE.Clock();
-                    
-                    this.modelPlaced = false;
-                    this.initialized = false;
-                    
-                    // UI elements
-                    this.moveInstruction = document.getElementById('move-instruction');
-                    this.placeButton = document.getElementById('tap-to-place');
-                    this.transformControls = document.getElementById('transform-controls');
-                    this.colorControls = document.getElementById('color-controls');
-                    
-                    this.init();
-                }
-                
-                async init() {
-                    try {
-                        // Check if WebXR is available
-                        if (!navigator.xr) {
-                            throw new Error('WebXR not supported');
-                        }
-                        
-                        // Initialize Three.js renderer
-                        this.renderer = new THREE.WebGLRenderer({ 
-                            canvas: document.getElementById('renderCanvas'),
-                            antialias: true,
-                            alpha: true
-                        });
-                        this.renderer.setPixelRatio(window.devicePixelRatio);
-                        this.renderer.setSize(window.innerWidth, window.innerHeight);
-                        this.renderer.xr.enabled = true;
-                        
-                        // Create scene
-                        this.scene = new THREE.Scene();
-                        
-                        // Create camera
-                        this.camera = new THREE.PerspectiveCamera(
-                            70, 
-                            window.innerWidth / window.innerHeight, 
-                            0.1, 
-                            1000
-                        );
-                        
-                        // Add lights
-                        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-                        this.scene.add(ambientLight);
-                        
-                        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-                        directionalLight.position.set(1, 1, 1);
-                        this.scene.add(directionalLight);
-                        
-                        // Add controller
-                        this.controller = this.renderer.xr.getController(0);
-                        this.scene.add(this.controller);
-                        
-                        // Create reticle for placement
-                        this.reticle = new THREE.Mesh(
-                            new THREE.RingGeometry(0.1, 0.2, 32).rotateX(-Math.PI / 2),
-                            new THREE.MeshBasicMaterial({ color: 0xffffff })
-                        );
-                        this.reticle.matrixAutoUpdate = false;
-                        this.reticle.visible = false;
-                        this.scene.add(this.reticle);
-                        
-                        // Load 3D model with DRACO loader
-                        const loader = new THREE.GLTFLoader();
-                        
-                        // Set up DRACO decompression
-                        const dracoLoader = new THREE.DRACOLoader();
-                        dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/libs/draco/');
-                        loader.setDRACOLoader(dracoLoader);
-                        
-                        loader.load(
-                            'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/LittlestTokyo.glb',
-                            (gltf) => {
-                                this.model = gltf.scene;
-                                this.model.scale.set(0.5, 0.5, 0.5);
-                                this.model.visible = false;
-                                this.scene.add(this.model);
-                                
-                                // Set up animations if any
-                                this.mixer = new THREE.AnimationMixer(this.model);
-                                if (gltf.animations && gltf.animations.length) {
-                                    gltf.animations.forEach((clip) => {
-                                        this.mixer.clipAction(clip).play();
-                                    });
-                                }
-                                
-                                this.initialized = true;
-                            },
-                            undefined,
-                            (error) => {
-                                console.error('Error loading model:', error);
-                                document.getElementById('error-title').textContent = 'Model Loading Error';
-                                document.getElementById('error-message').textContent = 'Failed to load 3D model. Please check your internet connection.';
-                                document.getElementById('error-screen').style.display = 'flex';
-                                document.getElementById('loading-screen').style.display = 'none';
-                            }
-                        );
-                        
-                        // Set up WebXR session
-                        const arButton = ARButton.createButton(this.renderer, { 
-                            requiredFeatures: ['hit-test'],
-                            optionalFeatures: ['dom-overlay'],
-                            domOverlay: { root: document.body }
-                        });
-                        
-                        if (!arButton) {
-                            throw new Error('ARButton creation failed');
-                        }
-                        
-                        document.body.appendChild(arButton);
-                        
-                        // Handle window resize
-                        window.addEventListener('resize', this.onWindowResize.bind(this));
-                        
-                        // Start animation loop
-                        this.renderer.setAnimationLoop(this.render.bind(this));
-                        
-                        // Show move instruction after a short delay
-                        setTimeout(() => {
-                            this.moveInstruction.style.display = 'block';
-                        }, 2000);
-                        
-                    } catch (error) {
-                        console.error('AR initialization error:', error);
-                        document.getElementById('error-title').textContent = 'AR Not Supported';
-                        document.getElementById('error-message').textContent = 'Your device or browser does not support AR features. Please try on a compatible device.';
-                        document.getElementById('error-screen').style.display = 'flex';
-                        document.getElementById('loading-screen').style.display = 'none';
-                    }
-                }
-                
-                async onSessionStart(session) {
-                    session.addEventListener('end', this.onSessionEnd.bind(this));
-                    
-                    // Configure the GL layer and get the WebGL context
-                    this.renderer.xr.setSession(session);
-                    
-                    // Request a reference space
-                    const referenceSpace = await session.requestReferenceSpace('local');
-                    
-                    // Request a hit test source
-                    const viewerSpace = await session.requestReferenceSpace('viewer');
-                    this.hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-                    
-                    // Set up frame loop
-                    session.requestAnimationFrame(this.onXRFrame.bind(this, referenceSpace));
-                }
-                
-                onSessionEnd() {
-                    this.hitTestSource = null;
-                }
-                
-                onXRFrame(referenceSpace, time, frame) {
-                    const session = frame.session;
-                    const pose = frame.getViewerPose(referenceSpace);
-                    
-                    if (pose) {
-                        const view = pose.views[0];
-                        
-                        // Update camera position and orientation
-                        const viewport = session.renderState.baseLayer.getViewport(view);
-                        this.renderer.setSize(viewport.width, viewport.height);
-                        
-                        this.camera.matrix.fromArray(view.transform.matrix);
-                        this.camera.projectionMatrix.fromArray(view.projectionMatrix);
-                        this.camera.updateMatrixWorld(true);
-                        
-                        // Handle hit test
-                        if (this.hitTestSource) {
-                            const hitTestResults = frame.getHitTestResults(this.hitTestSource);
-                            
-                            if (hitTestResults.length > 0) {
-                                const hit = hitTestResults[0];
-                                const hitMatrix = new THREE.Matrix4().fromArray(hit.getPose(referenceSpace).transform.matrix);
-                                
-                                // Update reticle position
-                                this.reticle.visible = true;
-                                this.reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
-                                
-                                // Update model position if not placed yet
-                                if (this.model && this.initialized && !this.modelPlaced) {
-                                    this.model.visible = true;
-                                    this.model.position.setFromMatrixPosition(hitMatrix);
-                                    
-                                    // Show placement button
-                                    this.placeButton.style.display = 'block';
-                                }
-                            } else {
-                                this.reticle.visible = false;
-                            }
-                        }
-                    }
-                    
-                    // Update animations
-                    if (this.mixer) {
-                        this.mixer.update(this.clock.getDelta());
-                    }
-                }
-                
-                render() {
-                    this.renderer.render(this.scene, this.camera);
-                }
-                
-                onWindowResize() {
-                    this.camera.aspect = window.innerWidth / window.innerHeight;
-                    this.camera.updateProjectionMatrix();
-                    this.renderer.setSize(window.innerWidth, window.innerHeight);
-                }
-                
-                placeModel() {
-                    if (this.model && !this.modelPlaced) {
-                        this.modelPlaced = true;
-                        this.placeButton.style.display = 'none';
-                        this.moveInstruction.style.display = 'none';
-                        this.transformControls.style.display = 'block';
-                        this.colorControls.style.display = 'block';
-                        
-                        // Hide reticle after placement
-                        this.reticle.visible = false;
-                    }
-                }
-                
-                scaleModel(value) {
-                    if (this.model) {
-                        const scaleValue = value / 50; // Convert slider value to scale factor
-                        this.model.scale.set(scaleValue, scaleValue, scaleValue);
-                    }
-                }
-                
-                rotateModel(value) {
-                    if (this.model) {
-                        this.model.rotation.y = THREE.MathUtils.degToRad(value);
-                    }
-                }
-                
-                changeModelColor(color) {
-                    if (this.model) {
-                        this.model.traverse((child) => {
-                            if (child.isMesh) {
-                                child.material.color.setHex(color);
-                            }
-                        });
-                    }
-                }
-            }
-
-            // Initialize the AR experience
-            const arExp = new ARExperience();
-            
-            // Set up UI event listeners
-            document.getElementById('tap-to-place').addEventListener('click', () => {
-                arExp.placeModel();
-            });
-            
-            document.getElementById('scale-slider').addEventListener('input', (e) => {
-                arExp.scaleModel(e.target.value);
-            });
-            
-            document.getElementById('rotation-slider').addEventListener('input', (e) => {
-                arExp.rotateModel(e.target.value);
-            });
-            
-            // Color options
-            document.getElementById('black').addEventListener('click', () => {
-                arExp.changeModelColor(0x111111);
-            });
-            
-            document.getElementById('orange').addEventListener('click', () => {
-                arExp.changeModelColor(0xff6600);
-            });
-            
-            document.getElementById('blue').addEventListener('click', () => {
-                arExp.changeModelColor(0x0066ff);
-            });
-            
-            document.getElementById('silver').addEventListener('click', () => {
-                arExp.changeModelColor(0xcccccc);
-            });
-            
-            // Hide loading screen after everything is ready
-            setTimeout(() => {
-                document.getElementById('loading-screen').style.display = 'none';
-            }, 2000);
+  <div id="container"></div>
+  
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const container = document.querySelector('#container');
+      
+      // Initialize MindAR with SLAM
+      const mindarThree = new MindARThree({
+        container: container,
+        uiLoading: "yes",
+        uiScanning: "yes",
+        uiError: "yes",
+        filterMinCF: 0.0001,
+        filterBeta: 0.001,
+        trackingMode: "slam", // SLAM tracking mode
+      });
+      
+      const { renderer, scene, camera } = mindarThree;
+      
+      // Add lights
+      const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+      scene.add(light);
+      
+      // Create AR content
+      const anchor = mindarThree.addAnchor(0);
+      const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+      const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+      const cube = new THREE.Mesh(geometry, material);
+      anchor.group.add(cube);
+      
+      // Start AR
+      mindarThree.start()
+        .then(() => {
+          console.log("AR started");
+        })
+        .catch((error) => {
+          console.error("AR failed to start:", error);
         });
-    </script>
+      
+      // Animation loop
+      const animate = () => {
+        requestAnimationFrame(animate);
+        if (anchor.visible) {
+          cube.rotation.x += 0.01;
+          cube.rotation.y += 0.01;
+        }
+        renderer.render(scene, camera);
+      };
+      animate();
+    });
+  </script>
 </body>
 </html>
