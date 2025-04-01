@@ -3,18 +3,31 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>WebXR + Three.js SLAM Demo</title>
+  <title>WebXR + Three.js SLAM Demo with GLB Model</title>
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/XRControllerModelFactory.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/XRControllerModelFactory.js"></script>
   <style>
     body { margin: 0; overflow: hidden; }
+    #ar-button {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      padding: 12px 24px;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+      z-index: 10;
+    }
   </style>
 </head>
 <body>
   <script>
     let camera, scene, renderer;
-    let controller;
+    let model;
     
     init();
     animate();
@@ -29,6 +42,10 @@
       light.position.set(0, 1, 0);
       scene.add(light);
       
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(0.5, 1, 0.5);
+      scene.add(directionalLight);
+      
       // Create renderer
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       renderer.setPixelRatio(window.devicePixelRatio);
@@ -36,12 +53,40 @@
       renderer.xr.enabled = true;
       document.body.appendChild(renderer.domElement);
       
-      // Add AR cube
-      const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-      const material = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
-      const cube = new THREE.Mesh(geometry, material);
-      cube.position.set(0, 0, -0.5);
-      scene.add(cube);
+      // Load GLB model
+      const loader = new THREE.GLTFLoader();
+      loader.load(
+        // URL of your GLB model
+        'pi.glb',
+        // onLoad callback
+        function (gltf) {
+          model = gltf.scene;
+          model.position.set(0, 0, -0.5);
+          model.scale.set(0.5, 0.5, 0.5); // Adjust scale as needed
+          scene.add(model);
+          
+          // Add animation mixer if model has animations
+          if (gltf.animations && gltf.animations.length) {
+            const mixer = new THREE.AnimationMixer(model);
+            const action = mixer.clipAction(gltf.animations[0]);
+            action.play();
+          }
+        },
+        // onProgress callback
+        function (xhr) {
+          console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+        },
+        // onError callback
+        function (error) {
+          console.error('Error loading GLB model:', error);
+          // Fallback cube if model fails to load
+          const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+          const material = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
+          const cube = new THREE.Mesh(geometry, material);
+          cube.position.set(0, 0, -0.5);
+          scene.add(cube);
+        }
+      );
       
       // Handle window resize
       window.addEventListener('resize', onWindowResize);
@@ -52,14 +97,11 @@
           .then((supported) => {
             if (supported) {
               const btn = document.createElement('button');
+              btn.id = 'ar-button';
               btn.innerHTML = 'Enter AR';
-              btn.style.position = 'absolute';
-              btn.style.left = '50%';
-              btn.style.top = '50%';
-              btn.style.transform = 'translate(-50%, -50%)';
               btn.addEventListener('click', () => {
                 navigator.xr.requestSession('immersive-ar', {
-                  requiredFeatures: ['local-floor', 'hit-test']
+                  requiredFeatures: ['local', 'hit-test']
                 }).then(onSessionStarted);
               });
               document.body.appendChild(btn);
@@ -73,10 +115,44 @@
     function onSessionStarted(session) {
       session.addEventListener('end', onSessionEnded);
       renderer.xr.setSession(session);
+      
+      // Hide AR button
+      const btn = document.getElementById('ar-button');
+      if (btn) btn.style.display = 'none';
+      
+      // Add hit testing
+      const hitTestSourceRequested = false;
+      let hitTestSource = null;
+      
+      function onXRFrame(time, frame) {
+        if (!hitTestSourceRequested) {
+          frame.session.requestReferenceSpace('viewer').then((referenceSpace) => {
+            frame.session.requestHitTestSource({ space: referenceSpace }).then((source) => {
+              hitTestSource = source;
+            });
+          });
+          hitTestSourceRequested = true;
+        }
+        
+        if (hitTestSource && model) {
+          const hitTestResults = frame.getHitTestResults(hitTestSource);
+          if (hitTestResults.length > 0) {
+            const hit = hitTestResults[0];
+            const pose = hit.getPose(renderer.xr.getReferenceSpace());
+            model.position.setFromMatrixPosition(pose.transform.matrix);
+          }
+        }
+      }
+      
+      renderer.xr.setAnimationLoop(onXRFrame);
     }
     
     function onSessionEnded() {
       renderer.xr.setSession(null);
+      
+      // Show AR button again
+      const btn = document.getElementById('ar-button');
+      if (btn) btn.style.display = 'block';
     }
     
     function onWindowResize() {
