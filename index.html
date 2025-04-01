@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>Web AR with SLAM</title>
+    <title>Web AR with SLAM & Chroma Key</title>
     <style>
         body {
             margin: 0;
@@ -63,10 +63,28 @@
             z-index: 10;
             display: none;
         }
+        #video-source {
+            display: none;
+        }
+        #mode-selector {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 20;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            color: white;
+        }
     </style>
 </head>
 <body>
     <div id="ar-container"></div>
+    <div id="video-source">
+        <video id="chroma-video" loop crossorigin="anonymous">
+            <source src="https://assets.mixkit.co/videos/preview/mixkit-man-dancing-under-changing-lights-1240-large.mp4" type="video/mp4">
+        </video>
+    </div>
     
     <div id="loading">
         <h1>Web AR Experience</h1>
@@ -76,29 +94,58 @@
     </div>
     
     <div id="debug-info"></div>
+    <div id="mode-selector">
+        <label><input type="radio" name="mode" value="webxr" checked> WebXR (Modern)</label>
+        <label><input type="radio" name="mode" value="webar"> WebAR (Legacy)</label>
+    </div>
 
     <!-- Import three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <!-- Import WebAR.js (a lightweight SLAM implementation) -->
+    <!-- Import WebAR.js for older devices -->
     <script src="https://raw.githack.com/jeromeetienne/AR.js/master/three.js/build/ar.js"></script>
-    <!-- Import WebXR polyfill for broader device support -->
+    <!-- Import WebXR polyfill -->
     <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js"></script>
+    <!-- Import chroma key shader -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/MaskPass.js"></script>
     
     <script>
         // Global variables
         let renderer, scene, camera, controller;
-        let arSession = null;
-        let arSource = null;
-        let arView = null;
+        let arSession = null, arSource = null, arView = null;
         let debugInfo = document.getElementById('debug-info');
         let loadingScreen = document.getElementById('loading');
         let errorMessage = document.getElementById('error-message');
         let startButton = document.getElementById('start-button');
-        
-        // Check for WebXR support
-        function checkXRSupport() {
+        let chromaVideo = document.getElementById('chroma-video');
+        let videoTexture, chromaMaterial;
+        let isLegacyMode = false;
+        let composer, videoMesh;
+
+        // Chroma key configuration
+        const chromaConfig = {
+            color: new THREE.Color(0x00ff00), // Green screen color
+            similarity: 0.4, // How similar colors are removed
+            smoothness: 0.1, // How smooth the color edges are
+            spill: 0.1 // How much to reduce green spill
+        };
+
+        // Check device capabilities
+        async function checkCapabilities() {
+            const modeSelector = document.querySelector('input[name="mode"]:checked').value;
+            isLegacyMode = modeSelector === 'webar';
+            
+            if (isLegacyMode) {
+                return true; // WebAR.js works on older devices
+            }
+
+            // Check for WebXR support
             if (!navigator.xr) {
-                errorMessage.textContent = "WebXR not supported in your browser. Try Chrome or Safari on iOS 15+.";
+                errorMessage.textContent = "WebXR not supported in your browser. Try Chrome or Safari on iOS 12+ with Legacy mode.";
                 errorMessage.style.display = "block";
                 startButton.style.display = "none";
                 return false;
@@ -106,7 +153,7 @@
             
             return navigator.xr.isSessionSupported('immersive-ar').then(supported => {
                 if (!supported) {
-                    errorMessage.textContent = "AR not supported on your device or browser.";
+                    errorMessage.textContent = "AR not supported on your device/browser. Try Legacy mode.";
                     errorMessage.style.display = "block";
                     startButton.style.display = "none";
                     return false;
@@ -114,12 +161,12 @@
                 return true;
             }).catch(err => {
                 console.error("Error checking AR support:", err);
-                errorMessage.textContent = "Error checking AR capabilities.";
+                errorMessage.textContent = "Error checking AR capabilities. Try Legacy mode.";
                 errorMessage.style.display = "block";
                 return false;
             });
         }
-        
+
         // Initialize the AR scene
         async function initAR() {
             // Set up Three.js renderer
@@ -129,11 +176,43 @@
             });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
             document.getElementById('ar-container').appendChild(renderer.domElement);
             
             // Create scene
             scene = new THREE.Scene();
+            
+            if (isLegacyMode) {
+                await initLegacyAR();
+            } else {
+                await initWebXRAR();
+            }
+            
+            // Load chroma key video
+            await setupChromaKeyVideo();
+            
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize);
+            
+            // Start AR session
+            try {
+                if (isLegacyMode) {
+                    startLegacyARSession();
+                } else {
+                    await startWebXRARSession();
+                }
+            } catch (err) {
+                console.error("Failed to start AR session:", err);
+                errorMessage.textContent = "Failed to start AR. Try different mode or device.";
+                errorMessage.style.display = "block";
+                loadingScreen.querySelector('p').textContent = "AR initialization failed";
+                startButton.style.display = "block";
+                startButton.onclick = retryAR;
+            }
+        }
+
+        // Initialize WebXR (modern devices)
+        async function initWebXRAR() {
+            renderer.xr.enabled = true;
             
             // Create camera
             camera = new THREE.PerspectiveCamera(
@@ -141,44 +220,139 @@
                 0.1, 1000
             );
             
-            // Add light
+            // Add lights
+            addLights();
+            
+            // Add test object
+            addTestObjects();
+        }
+
+        // Initialize WebAR.js (legacy devices)
+        async function initLegacyAR() {
+            // Create AR.js camera
+            camera = new THREE.Camera();
+            scene.add(camera);
+            
+            // Create AR.js source
+            arSource = new THREEx.ArSource({
+                sourceType: 'webcam',
+                sourceWidth: window.innerWidth,
+                sourceHeight: window.innerHeight,
+                displayWidth: window.innerWidth,
+                displayHeight: window.innerHeight
+            });
+            
+            // Create AR.js context
+            arContext = new THREEx.ArContext(arSource, {
+                cameraParametersUrl: 'https://raw.githack.com/jeromeetienne/AR.js/master/data/data/camera_para.dat',
+                detectionMode: 'mono'
+            });
+            
+            // Add lights
+            addLights();
+            
+            // Add test object
+            addTestObjects();
+        }
+
+        // Add lights to scene
+        function addLights() {
             const light = new THREE.AmbientLight(0xffffff, 1.0);
             scene.add(light);
             
-            // Add directional light
             const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
             directionalLight.position.set(0, 1, 0);
             scene.add(directionalLight);
-            
-            // Add a simple 3D object to test
+        }
+
+        // Add test objects to scene
+        function addTestObjects() {
             const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
             const material = new THREE.MeshPhongMaterial({ 
-                color: 0x00ff00, 
+                color: 0xff0000, 
                 transparent: true, 
                 opacity: 0.8 
             });
             const cube = new THREE.Mesh(geometry, material);
             cube.position.set(0, 0, -0.5);
             scene.add(cube);
-            
-            // Handle window resize
-            window.addEventListener('resize', onWindowResize);
-            
-            // Start AR session
-            try {
-                await startARSession();
-            } catch (err) {
-                console.error("Failed to start AR session:", err);
-                errorMessage.textContent = "Failed to start AR. Make sure you're on a supported device.";
-                errorMessage.style.display = "block";
-                loadingScreen.querySelector('p').textContent = "AR initialization failed";
-                startButton.style.display = "block";
-                startButton.onclick = retryAR;
-            }
         }
-        
-        // Start AR session
-        async function startARSession() {
+
+        // Set up chroma key video
+        async function setupChromaKeyVideo() {
+            // Load video
+            await new Promise((resolve) => {
+                chromaVideo.load();
+                chromaVideo.oncanplay = resolve;
+                chromaVideo.play();
+            });
+            
+            // Create video texture
+            videoTexture = new THREE.VideoTexture(chromaVideo);
+            videoTexture.minFilter = THREE.LinearFilter;
+            videoTexture.magFilter = THREE.LinearFilter;
+            videoTexture.format = THREE.RGBFormat;
+            
+            // Create chroma key material
+            chromaMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    texture: { value: videoTexture },
+                    color: { value: chromaConfig.color },
+                    similarity: { value: chromaConfig.similarity },
+                    smoothness: { value: chromaConfig.smoothness },
+                    spill: { value: chromaConfig.spill }
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform sampler2D texture;
+                    uniform vec3 color;
+                    uniform float similarity;
+                    uniform float smoothness;
+                    uniform float spill;
+                    
+                    varying vec2 vUv;
+                    
+                    void main() {
+                        vec4 tColor = texture2D(texture, vUv);
+                        float a = 1.0;
+                        
+                        // Chroma key algorithm
+                        float maskY = 0.2989 * color.r + 0.5866 * color.g + 0.1145 * color.b;
+                        float maskCr = 0.7132 * (color.r - maskY);
+                        float maskCb = 0.5647 * (color.b - maskY);
+                        
+                        float Y = 0.2989 * tColor.r + 0.5866 * tColor.g + 0.1145 * tColor.b;
+                        float Cr = 0.7132 * (tColor.r - Y);
+                        float Cb = 0.5647 * (tColor.b - Y);
+                        
+                        float blendValue = smoothstep(similarity, similarity + smoothness, distance(vec2(Cr, Cb), vec2(maskCr, maskCb)));
+                        a = blendValue;
+                        
+                        // Reduce green spill
+                        float desat = dot(tColor.rgb, vec3(0.3, 0.6, 0.1));
+                        tColor.rgb = mix(vec3(desat), tColor.rgb, a * (1.0 - spill));
+                        
+                        gl_FragColor = vec4(tColor.rgb, a);
+                    }
+                `,
+                transparent: true
+            });
+            
+            // Create video plane
+            const videoGeometry = new THREE.PlaneGeometry(0.5, 0.5 * (chromaVideo.videoHeight / chromaVideo.videoWidth));
+            videoMesh = new THREE.Mesh(videoGeometry, chromaMaterial);
+            videoMesh.position.set(0, 0, -0.8);
+            scene.add(videoMesh);
+        }
+
+        // Start WebXR AR session
+        async function startWebXRARSession() {
             if (!navigator.xr) {
                 throw new Error("WebXR not available");
             }
@@ -202,23 +376,51 @@
             // Start animation loop
             renderer.setAnimationLoop(onXRFrame);
         }
-        
-        // Retry AR initialization
-        function retryAR() {
-            loadingScreen.style.display = "flex";
-            errorMessage.style.display = "none";
-            startButton.style.display = "none";
-            loadingScreen.querySelector('p').textContent = "Loading AR capabilities...";
-            initAR();
+
+        // Start legacy AR session
+        function startLegacyARSession() {
+            // Hide loading screen
+            loadingScreen.style.display = "none";
+            debugInfo.style.display = "block";
+            
+            // Start animation loop
+            renderer.setAnimationLoop(() => {
+                if (arSource.ready) {
+                    arContext.update(arSource.domElement);
+                    renderer.render(scene, camera);
+                }
+                
+                // Update video texture
+                if (videoTexture) {
+                    videoTexture.needsUpdate = true;
+                }
+                
+                // Update debug info
+                updateDebugInfo();
+            });
         }
-        
+
         // Handle XR frame updates
         function onXRFrame(time, frame) {
+            // Update video texture
+            if (videoTexture) {
+                videoTexture.needsUpdate = true;
+            }
+            
             // Update debug info
+            updateDebugInfo();
+            
+            // Render scene
+            renderer.render(scene, camera);
+        }
+
+        // Update debug information
+        function updateDebugInfo() {
             if (camera) {
                 const pos = camera.position;
                 const rot = camera.rotation;
                 debugInfo.innerHTML = `
+                    Mode: ${isLegacyMode ? 'Legacy' : 'WebXR'}<br>
                     Camera Position:<br>
                     X: ${pos.x.toFixed(2)}<br>
                     Y: ${pos.y.toFixed(2)}<br>
@@ -229,11 +431,8 @@
                     Z: ${rot.z.toFixed(2)}
                 `;
             }
-            
-            // Render scene
-            renderer.render(scene, camera);
         }
-        
+
         // Handle session end
         function onSessionEnd() {
             renderer.setAnimationLoop(null);
@@ -242,23 +441,49 @@
             startButton.style.display = "block";
             startButton.onclick = retryAR;
         }
-        
+
         // Handle window resize
         function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            
+            if (arSource) {
+                arSource.onResizeElement();
+                arSource.copyElementSizeTo(renderer.domElement);
+            }
         }
-        
+
+        // Retry AR initialization
+        function retryAR() {
+            loadingScreen.style.display = "flex";
+            errorMessage.style.display = "none";
+            startButton.style.display = "none";
+            loadingScreen.querySelector('p').textContent = "Loading AR capabilities...";
+            initAR();
+        }
+
         // Initialize when DOM is loaded
         document.addEventListener('DOMContentLoaded', async () => {
-            // Check for WebXR support
-            const supported = await checkXRSupport();
+            // Initialize WebXR polyfill
+            new WebXRPolyfill();
+            
+            // Check capabilities
+            const supported = await checkCapabilities();
             
             if (supported) {
                 startButton.style.display = "block";
                 startButton.onclick = initAR;
             }
+            
+            // Allow mode switching
+            document.querySelectorAll('input[name="mode"]').forEach(radio => {
+                radio.addEventListener('change', () => {
+                    if (startButton.style.display === "block") {
+                        retryAR();
+                    }
+                });
+            });
         });
     </script>
 </body>
