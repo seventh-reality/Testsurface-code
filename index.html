@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>Web AR with SLAM & Chroma Key</title>
+    <title>Web AR with Surface Tracking</title>
     <style>
         body {
             margin: 0;
@@ -65,8 +65,26 @@
             z-index: 10;
             display: none;
         }
-        #video-source {
+        #placement-ui {
+            position: fixed;
+            bottom: 20px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            z-index: 20;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
             display: none;
+        }
+        #placement-button {
+            padding: 10px 20px;
+            background-color: #4285F4;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            font-size: 16px;
+            cursor: pointer;
         }
         #mode-selector {
             position: fixed;
@@ -86,11 +104,6 @@
 </head>
 <body>
     <div id="ar-container"></div>
-    <div id="video-source">
-        <video id="chroma-video" loop playsinline webkit-playsinline muted crossorigin="anonymous">
-            <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" type="video/mp4">
-        </video>
-    </div>
     
     <div id="loading">
         <h1>Web AR Experience</h1>
@@ -100,6 +113,10 @@
     </div>
     
     <div id="debug-info"></div>
+    <div id="placement-ui">
+        <p>Move your device to detect surfaces</p>
+        <button id="placement-button">Place Model</button>
+    </div>
     <div id="mode-selector">
         <label class="mode-option"><input type="radio" name="mode" value="webxr"> WebXR (Modern)</label>
         <label class="mode-option"><input type="radio" name="mode" value="webar" checked> WebAR (Legacy)</label>
@@ -113,6 +130,8 @@
     <script src="https://raw.githack.com/jeromeetienne/AR.js/master/three.js/build/ar.js"></script>
     <!-- Import WebXR polyfill -->
     <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js"></script>
+    <!-- Import WebXR hit test library -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/webxr/XRControllerModelFactory.js"></script>
     
     <script>
         // Global variables
@@ -122,26 +141,36 @@
         let loadingScreen = document.getElementById('loading');
         let errorMessage = document.getElementById('error-message');
         let startButton = document.getElementById('start-button');
-        let chromaVideo = document.getElementById('chroma-video');
-        let videoTexture, videoMesh;
-        let isLegacyMode = true; // Default to legacy for wider compatibility
+        let placementUI = document.getElementById('placement-ui');
+        let placementButton = document.getElementById('placement-button');
         let glbModel = null;
-        let hasUserInteracted = false;
+        let hitTestSource = null;
+        let hitTestSourceRequested = false;
+        let referenceSpace = null;
+        let isLegacyMode = true;
+        let modelPlaced = false;
+        let modelAnchor = null;
 
         // Configuration
         const config = {
             debug: true,
-            video: {
-                width: 0.8,
-                height: 0.45,
-                position: { x: 0, y: 0, z: -0.8 }
-            },
             model: {
                 url: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb',
                 scale: 0.5,
-                position: { x: 0, y: -0.2, z: -0.5 }
+                position: { x: 0, y: 0, z: 0 }
+            },
+            stability: {
+                minPlaneArea: 0.25, // Minimum plane area for stable placement (in square meters)
+                minHitTestDistance: 0.3, // Minimum distance from camera to place object
+                maxHitTestDistance: 5.0, // Maximum distance from camera to place object
+                stabilizationFrames: 10, // Number of frames to wait before considering position stable
+                movementThreshold: 0.01 // Threshold for considering model movement significant
             }
         };
+
+        // Model stabilization variables
+        let stablePositions = [];
+        let isModelStable = false;
 
         // Check device capabilities
         async function checkCapabilities() {
@@ -203,9 +232,9 @@
                 renderer = new THREE.WebGLRenderer({ 
                     antialias: true, 
                     alpha: true,
-                    preserveDrawingBuffer: true, // For iOS compatibility
+                    preserveDrawingBuffer: true,
                     powerPreference: "high-performance",
-                    logarithmicDepthBuffer: true // For better depth handling
+                    logarithmicDepthBuffer: true
                 });
                 
                 // Adjust pixel ratio for performance
@@ -216,7 +245,7 @@
                 
                 // Add renderer to DOM
                 const container = document.getElementById('ar-container');
-                container.innerHTML = ''; // Clear previous renderer
+                container.innerHTML = '';
                 container.appendChild(renderer.domElement);
                 
                 // Create scene
@@ -227,9 +256,6 @@
                 } else {
                     await initWebXRAR();
                 }
-                
-                // Load chroma key video
-                await setupVideo();
                 
                 // Load 3D model
                 await loadGLBModel();
@@ -264,6 +290,10 @@
             
             // Add lights
             addLights();
+            
+            // Show placement UI for WebXR
+            placementUI.style.display = 'block';
+            placementButton.onclick = placeModel;
         }
 
         // Initialize WebAR.js (legacy devices)
@@ -294,6 +324,9 @@
             
             // Add lights
             addLights();
+            
+            // For legacy AR, we'll place the model automatically when markers are detected
+            modelPlaced = true;
         }
 
         // Add lights to scene
@@ -314,74 +347,6 @@
             if (camera && !scene.children.includes(camera)) {
                 scene.add(camera);
             }
-        }
-
-        // Set up video playback
-        async function setupVideo() {
-            // Clear previous video elements
-            if (videoMesh) {
-                scene.remove(videoMesh);
-                videoMesh.geometry.dispose();
-                videoMesh.material.dispose();
-            }
-            if (videoTexture) {
-                videoTexture.dispose();
-            }
-            
-            // iOS requires specific attributes for autoplay
-            chromaVideo.setAttribute('playsinline', '');
-            chromaVideo.setAttribute('webkit-playsinline', '');
-            chromaVideo.muted = true;
-            
-            // Load video
-            await new Promise((resolve) => {
-                const onReady = () => {
-                    chromaVideo.removeEventListener('canplay', onReady);
-                    resolve();
-                };
-                
-                chromaVideo.addEventListener('canplay', onReady);
-                chromaVideo.load();
-                
-                // Handle video play on user interaction
-                const playVideo = () => {
-                    if (!hasUserInteracted) {
-                        hasUserInteracted = true;
-                        chromaVideo.play().catch(e => console.warn("Video play error:", e));
-                    }
-                };
-                
-                document.addEventListener('click', playVideo);
-                document.addEventListener('touchstart', playVideo);
-            });
-            
-            // Create video texture
-            videoTexture = new THREE.VideoTexture(chromaVideo);
-            videoTexture.minFilter = THREE.LinearFilter;
-            videoTexture.magFilter = THREE.LinearFilter;
-            videoTexture.format = THREE.RGBFormat;
-            
-            // Create video plane
-            const aspectRatio = chromaVideo.videoHeight / chromaVideo.videoWidth;
-            const videoGeometry = new THREE.PlaneGeometry(
-                config.video.width, 
-                config.video.width * aspectRatio
-            );
-            
-            const videoMaterial = new THREE.MeshBasicMaterial({ 
-                map: videoTexture,
-                transparent: true,
-                opacity: 0.9,
-                side: THREE.DoubleSide
-            });
-            
-            videoMesh = new THREE.Mesh(videoGeometry, videoMaterial);
-            videoMesh.position.set(
-                config.video.position.x,
-                config.video.position.y,
-                config.video.position.z
-            );
-            scene.add(videoMesh);
         }
 
         // Load GLB model
@@ -412,6 +377,9 @@
                     config.model.position.z
                 );
                 
+                // Make model initially invisible until placed
+                glbModel.visible = false;
+                
                 // Simplify materials for better performance on mobile
                 glbModel.traverse(child => {
                     if (child.isMesh) {
@@ -440,10 +408,10 @@
             }
             
             try {
-                // Request AR session
+                // Request AR session with plane detection
                 const session = await navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['local'],
-                    optionalFeatures: ['dom-overlay', 'hit-test'],
+                    requiredFeatures: ['local', 'hit-test'],
+                    optionalFeatures: ['dom-overlay', 'plane-detection'],
                     domOverlay: { root: document.body }
                 });
                 
@@ -452,6 +420,19 @@
                 // Set up Three.js XR rendering
                 renderer.xr.setReferenceSpaceType('local');
                 await renderer.xr.setSession(session);
+                
+                // Get the reference space
+                referenceSpace = await session.requestReferenceSpace('local');
+                
+                // Request hit test source for stable surface detection
+                session.requestHitTestSource({ 
+                    space: referenceSpace,
+                    entityTypes: ['plane']
+                }).then(source => {
+                    hitTestSource = source;
+                }).catch(err => {
+                    console.error("Hit test source error:", err);
+                });
                 
                 // Hide loading screen
                 loadingScreen.style.display = "none";
@@ -469,7 +450,6 @@
         function startLegacyARSession() {
             // iOS specific performance optimizations
             if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
-                // Reduce rendering quality for better performance
                 renderer.setPixelRatio(1);
             }
             
@@ -483,11 +463,11 @@
                     arContext.update(arSource.domElement);
                     renderer.clear();
                     renderer.render(scene, camera);
-                }
-                
-                // Update video texture
-                if (videoTexture && chromaVideo.readyState >= chromaVideo.HAVE_ENOUGH_DATA) {
-                    videoTexture.needsUpdate = true;
+                    
+                    // For legacy AR, show model when markers are detected
+                    if (glbModel) {
+                        glbModel.visible = true;
+                    }
                 }
                 
                 // Update debug info
@@ -497,34 +477,174 @@
 
         // Handle XR frame updates
         function onXRFrame(time, frame) {
-            // Update video texture
-            if (videoTexture && chromaVideo.readyState >= chromaVideo.HAVE_ENOUGH_DATA) {
-                videoTexture.needsUpdate = true;
+            if (!modelPlaced) {
+                // Show model placement guidance
+                updatePlacementUI();
+            }
+            
+            // Get the XR frame and session
+            const session = frame.session;
+            const xrViewerPose = frame.getViewerPose(referenceSpace);
+            
+            if (xrViewerPose) {
+                // Update camera position
+                const xrCamera = renderer.xr.getCamera(camera);
+                
+                // Perform hit test for surface detection
+                if (hitTestSource && !modelPlaced) {
+                    const hitTestResults = frame.getHitTestResults(hitTestSource);
+                    
+                    if (hitTestResults.length > 0) {
+                        const hit = hitTestResults[0];
+                        const hitPose = hit.getPose(referenceSpace);
+                        
+                        if (hitPose) {
+                            // Visualize the hit point (for debugging)
+                            if (config.debug) {
+                                debugHitPoint(hitPose.transform);
+                            }
+                            
+                            // Check if the hit point is at a reasonable distance
+                            const hitPosition = hitPose.transform.position;
+                            const distance = Math.sqrt(
+                                hitPosition.x * hitPosition.x +
+                                hitPosition.y * hitPosition.y +
+                                hitPosition.z * hitPosition.z
+                            );
+                            
+                            if (distance >= config.stability.minHitTestDistance && 
+                                distance <= config.stability.maxHitTestDistance) {
+                                
+                                // Update model position based on hit test
+                                updateModelPosition(hitPose.transform);
+                            }
+                        }
+                    }
+                }
+                
+                // Render the scene
+                renderer.render(scene, camera);
             }
             
             // Update debug info
             updateDebugInfo();
-            
-            // Render scene
-            renderer.render(scene, camera);
         }
 
-        // Update debug information
-        function updateDebugInfo() {
-            if (camera && config.debug) {
-                const pos = camera.position;
-                const rot = camera.rotation;
-                debugInfo.innerHTML = `
-                    Mode: ${isLegacyMode ? 'Legacy' : 'WebXR'}<br>
-                    Camera Position:<br>
-                    X: ${pos.x.toFixed(2)}<br>
-                    Y: ${pos.y.toFixed(2)}<br>
-                    Z: ${pos.z.toFixed(2)}<br>
-                    Rotation:<br>
-                    X: ${rot.x.toFixed(2)}<br>
-                    Y: ${rot.y.toFixed(2)}<br>
-                    Z: ${rot.z.toFixed(2)}
-                `;
+        // Debug visualization of hit point
+        function debugHitPoint(transform) {
+            // Remove previous debug marker
+            const oldMarker = scene.getObjectByName('debugHitPoint');
+            if (oldMarker) scene.remove(oldMarker);
+            
+            // Create a small sphere at hit point
+            const geometry = new THREE.SphereGeometry(0.02, 16, 16);
+            const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            const sphere = new THREE.Mesh(geometry, material);
+            sphere.name = 'debugHitPoint';
+            
+            // Position the sphere at the hit point
+            sphere.position.set(
+                transform.position.x,
+                transform.position.y,
+                transform.position.z
+            );
+            
+            scene.add(sphere);
+        }
+
+        // Update model position with stabilization
+        function updateModelPosition(transform) {
+            if (!glbModel) return;
+            
+            // Get current hit position
+            const newPosition = new THREE.Vector3(
+                transform.position.x,
+                transform.position.y,
+                transform.position.z
+            );
+            
+            // Store recent positions for stabilization
+            stablePositions.push(newPosition);
+            if (stablePositions.length > config.stability.stabilizationFrames) {
+                stablePositions.shift();
+            }
+            
+            // Calculate average position for stabilization
+            const avgPosition = new THREE.Vector3();
+            stablePositions.forEach(pos => avgPosition.add(pos));
+            avgPosition.divideScalar(stablePositions.length);
+            
+            // Check if position has stabilized
+            const lastPosition = stablePositions[stablePositions.length - 2] || avgPosition;
+            const movement = newPosition.distanceTo(lastPosition);
+            
+            isModelStable = stablePositions.length >= config.stability.stabilizationFrames && 
+                           movement < config.stability.movementThreshold;
+            
+            // Update model position
+            glbModel.position.copy(avgPosition);
+            
+            // Align model with surface normal (if available)
+            if (transform.orientation) {
+                const quaternion = new THREE.Quaternion(
+                    transform.orientation.x,
+                    transform.orientation.y,
+                    transform.orientation.z,
+                    transform.orientation.w
+                );
+                glbModel.quaternion.copy(quaternion);
+            }
+            
+            // Make model visible
+            glbModel.visible = true;
+            
+            // Update placement UI
+            updatePlacementUI();
+        }
+
+        // Update placement UI based on current state
+        function updatePlacementUI() {
+            if (modelPlaced) {
+                placementUI.querySelector('p').textContent = "Model placed. Move around to view.";
+                placementButton.textContent = "Reposition Model";
+            } else if (isModelStable) {
+                placementUI.querySelector('p').textContent = "Surface detected. Ready to place.";
+                placementButton.style.backgroundColor = "#34A853";
+            } else {
+                placementUI.querySelector('p').textContent = "Move your device to detect surfaces";
+                placementButton.style.backgroundColor = "#4285F4";
+            }
+        }
+
+        // Place or reposition the model
+        function placeModel() {
+            if (isModelStable || modelPlaced) {
+                modelPlaced = true;
+                placementUI.querySelector('p').textContent = "Model placed. Move around to view.";
+                placementButton.textContent = "Reposition Model";
+                
+                // Create an anchor for the model if supported
+                if (renderer.xr.getSession() && renderer.xr.getSession().createAnchor) {
+                    if (modelAnchor) {
+                        scene.remove(modelAnchor);
+                    }
+                    
+                    const anchorPosition = glbModel.position.clone();
+                    const anchorQuaternion = glbModel.quaternion.clone();
+                    
+                    renderer.xr.getSession().createAnchor(
+                        new XRRigidTransform(
+                            { x: anchorPosition.x, y: anchorPosition.y, z: anchorPosition.z },
+                            { x: anchorQuaternion.x, y: anchorQuaternion.y, z: anchorQuaternion.z, w: anchorQuaternion.w }
+                        ),
+                        referenceSpace
+                    ).then(anchor => {
+                        modelAnchor = anchor;
+                        console.log("Anchor created for model stabilization");
+                    }).catch(err => {
+                        console.warn("Failed to create anchor:", err);
+                    });
+                }
             }
         }
 
@@ -535,6 +655,15 @@
             loadingScreen.querySelector('p').textContent = "AR session ended";
             startButton.style.display = "block";
             startButton.onclick = retryAR;
+            placementUI.style.display = "none";
+            
+            // Reset tracking variables
+            hitTestSource = null;
+            hitTestSourceRequested = false;
+            referenceSpace = null;
+            modelPlaced = false;
+            stablePositions = [];
+            isModelStable = false;
         }
 
         // Handle window resize
@@ -556,6 +685,7 @@
             loadingScreen.style.display = "flex";
             errorMessage.style.display = "none";
             startButton.style.display = "none";
+            placementUI.style.display = "none";
             loadingScreen.querySelector('p').textContent = "Loading AR capabilities...";
             
             // Clean up previous session
@@ -572,9 +702,14 @@
             renderer = null;
             arSource = null;
             arContext = null;
-            videoTexture = null;
-            videoMesh = null;
             glbModel = null;
+            hitTestSource = null;
+            hitTestSourceRequested = false;
+            referenceSpace = null;
+            modelPlaced = false;
+            stablePositions = [];
+            isModelStable = false;
+            modelAnchor = null;
             
             initAR();
         }
@@ -585,12 +720,6 @@
             if (window.WebXRPolyfill) {
                 new WebXRPolyfill();
             }
-            
-            // Enable video playback on user interaction
-            document.body.addEventListener('click', () => {
-                hasUserInteracted = true;
-                chromaVideo.play().catch(e => console.warn("Video play error:", e));
-            });
             
             // Check capabilities
             const supported = await checkCapabilities();
