@@ -57,20 +57,32 @@
             cursor: pointer;
             z-index: 10;
         }
+        
+        #error-message {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 0, 0, 0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            text-align: center;
+            z-index: 10;
+            display: none;
+        }
     </style>
 </head>
 <body>
     <div id="ar-container"></div>
     <div id="loading">Loading AR experience...</div>
     <div id="marker-info">Move your device to detect surfaces</div>
+    <div id="error-message"></div>
     <button id="start-button" style="display: none;">Start AR</button>
 
     <!-- Import required libraries -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/effects/OutlineEffect.js"></script>
-    <!-- Proper WebXR polyfill for broader device support -->
     <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js"></script>
     
     <script>
@@ -78,30 +90,31 @@
         let scene, camera, renderer;
         let model, mixer, clock;
         let hitTestSource = null;
-        let hitTestSourceRequested = false;
         let reticle = null;
-        let surfacesDetected = false;
         let xrSession = null;
+        let referenceSpace = null;
+        let currentHitTestMode = 'none';
         
         // DOM elements
         const container = document.getElementById('ar-container');
         const loadingElement = document.getElementById('loading');
         const markerInfo = document.getElementById('marker-info');
         const startButton = document.getElementById('start-button');
+        const errorMessage = document.getElementById('error-message');
         
         // Initialize the AR experience
         init();
         
         function init() {
-            // First check if WebXR is supported at all
+            // First check if we're in a secure context
             if (!window.isSecureContext) {
-                loadingElement.textContent = "WebXR requires HTTPS or localhost. Please use a secure context.";
+                showError("WebXR requires HTTPS or localhost. Please use a secure context.");
                 return;
             }
             
             // Initialize WebXR polyfill
             if (navigator.xr === undefined) {
-                const polyfill = new WebXRPolyfill();
+                new WebXRPolyfill();
             }
             
             // Set up Three.js scene
@@ -114,7 +127,7 @@
             renderer = new THREE.WebGLRenderer({ 
                 antialias: true, 
                 alpha: true,
-                preserveDrawingBuffer: true // Required for some AR features
+                preserveDrawingBuffer: true
             });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -139,18 +152,28 @@
             window.addEventListener('resize', onWindowResize);
         }
         
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+            console.error(message);
+        }
+        
         function checkARSupport() {
-            navigator.xr?.isSessionSupported('immersive-ar').then((supported) => {
+            if (!navigator.xr) {
+                showError("WebXR not supported in your browser. Try Chrome or Safari on iOS 15+.");
+                return;
+            }
+            
+            navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
                 if (supported) {
                     startButton.style.display = 'block';
                     startButton.addEventListener('click', startAR);
                     loadingElement.style.display = 'none';
                 } else {
-                    loadingElement.textContent = "AR not supported on your device/browser. Try Chrome on Android or Safari on iOS 15+.";
+                    showError("AR not supported on your device/browser. Try Chrome on Android or Safari on iOS 15+.");
                 }
             }).catch(error => {
-                console.error("Error checking AR support:", error);
-                loadingElement.textContent = "Error checking AR capabilities. See console for details.";
+                showError("Error checking AR support: " + error.message);
             });
         }
         
@@ -168,22 +191,42 @@
             if (!xrSession) return;
             
             try {
-                // Create a reference space of type 'viewer' for hit testing
-                const viewerSpace = await xrSession.requestReferenceSpace('viewer');
-                hitTestSource = await xrSession.requestHitTestSource({ 
-                    space: viewerSpace 
-                });
-                hitTestSourceRequested = true;
+                // Try different reference spaces in order of preference
+                const referenceSpaceTypes = ['local', 'viewer', 'local-floor'];
+                
+                for (const type of referenceSpaceTypes) {
+                    try {
+                        referenceSpace = await xrSession.requestReferenceSpace(type);
+                        currentHitTestMode = type;
+                        console.log(`Using reference space: ${type}`);
+                        
+                        // Try to get hit test source
+                        try {
+                            hitTestSource = await xrSession.requestHitTestSource({ 
+                                space: referenceSpace 
+                            });
+                            markerInfo.textContent = "Move your device to detect surfaces";
+                            return;
+                        } catch (hitTestError) {
+                            console.warn(`Hit testing not supported with ${type} space:`, hitTestError);
+                        }
+                    } catch (refSpaceError) {
+                        console.warn(`Reference space ${type} not supported:`, refSpaceError);
+                    }
+                }
+                
+                // If we get here, no hit test source was created
+                showError("Surface detection not available on this device");
+                markerInfo.textContent = "AR mode without surface detection";
+                
             } catch (error) {
-                console.error("Error setting up hit test:", error);
-                markerInfo.textContent = "Surface detection not available";
+                showError("Error setting up AR: " + error.message);
             }
         }
         
         function onXRFrame(time, frame) {
             if (!xrSession) return;
             
-            const referenceSpace = renderer.xr.getReferenceSpace();
             const pose = frame.getViewerPose(referenceSpace);
             
             if (pose) {
@@ -204,14 +247,16 @@
                             reticle.visible = true;
                             reticle.matrix.fromArray(hitPose.transform.matrix);
                             
-                            if (!surfacesDetected) {
-                                surfacesDetected = true;
-                                markerInfo.textContent = "Surface detected! Tap to place object.";
+                            // Only add click listener once
+                            if (!container.__clickListenerAdded) {
                                 container.addEventListener('click', placeModel, { once: true });
+                                container.__clickListenerAdded = true;
+                                markerInfo.textContent = "Surface detected! Tap to place object.";
                             }
                         }
                     } else {
                         reticle.visible = false;
+                        container.__clickListenerAdded = false;
                     }
                 }
             }
@@ -249,8 +294,7 @@
                 },
                 undefined,
                 (error) => {
-                    console.error("Error loading model:", error);
-                    markerInfo.textContent = "Error loading model. See console.";
+                    showError("Error loading model: " + error.message);
                 }
             );
         }
@@ -259,14 +303,28 @@
             startButton.style.display = 'none';
             loadingElement.textContent = "Starting AR session...";
             loadingElement.style.display = 'block';
+            errorMessage.style.display = 'none';
             
             try {
-                // Request AR session with required features
-                xrSession = await navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['hit-test'],
-                    optionalFeatures: ['dom-overlay'],
-                    domOverlay: { root: document.body }
-                });
+                // Try to request session with different feature combinations
+                const sessionOptions = [
+                    { requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'] },
+                    { requiredFeatures: ['local'], optionalFeatures: ['dom-overlay'] },
+                    { optionalFeatures: ['dom-overlay'] }
+                ];
+                
+                for (const options of sessionOptions) {
+                    try {
+                        xrSession = await navigator.xr.requestSession('immersive-ar', options);
+                        break;
+                    } catch (err) {
+                        console.warn(`Session request failed with options ${JSON.stringify(options)}:`, err);
+                    }
+                }
+                
+                if (!xrSession) {
+                    throw new Error("Could not create AR session with any supported configuration");
+                }
                 
                 xrSession.addEventListener('end', onSessionEnded);
                 
@@ -277,10 +335,10 @@
                 renderer.setAnimationLoop(onXRFrame);
                 
                 loadingElement.style.display = 'none';
-                markerInfo.textContent = "Move your device to detect surfaces";
+                
             } catch (error) {
-                console.error("AR session error:", error);
-                loadingElement.textContent = `Failed to start AR: ${error.message}`;
+                showError("Failed to start AR: " + error.message);
+                loadingElement.style.display = 'none';
                 startButton.style.display = 'block';
             }
         }
@@ -294,7 +352,6 @@
             
             startButton.style.display = 'block';
             markerInfo.textContent = "AR session ended";
-            surfacesDetected = false;
             
             // Clean up
             if (model) {
@@ -306,6 +363,11 @@
                 scene.add(reticle);
                 reticle.visible = false;
             }
+            
+            // Reset hit test
+            hitTestSource = null;
+            referenceSpace = null;
+            currentHitTestMode = 'none';
         }
         
         function onWindowResize() {
