@@ -1,189 +1,88 @@
-<!-- Save as index.html and serve with HTTPS -->
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>WebAR on All Devices</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AR Experience</title>
   <style>
-    body, html {
-      margin: 0; padding: 0; overflow: hidden;
+    body {
+      margin: 0;
+      overflow: hidden;
       background-color: black;
     }
-    #loading {
+    #message {
       position: absolute;
-      top: 50%; left: 50%;
+      top: 50%;
+      left: 50%;
       transform: translate(-50%, -50%);
       color: white;
+      background: rgba(0,0,0,0.6);
+      padding: 16px 24px;
+      border-radius: 12px;
       font-family: sans-serif;
       z-index: 10;
     }
-    #placement-ui {
-      position: absolute;
-      bottom: 20px; left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0,0,0,0.8);
-      color: white; padding: 10px 20px;
-      border-radius: 8px; z-index: 10;
-      font-family: sans-serif;
-      display: none;
-    }
   </style>
-
-  <!-- Libraries -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js"></script>
 </head>
 <body>
-  <div id="loading">Loading AR Experience...</div>
-  <div id="placement-ui">Move phone to find surface...</div>
+  <div id="message">Checking AR capabilities...</div>
+
+  <!-- Three.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js"></script>
 
   <script>
-    if (!navigator.xr) new WebXRPolyfill();
-
-    let scene, camera, renderer, reticle, model, mixer;
-    let xrSession, referenceSpace, viewerSpace, hitTestSource;
-    let clock = new THREE.Clock();
-    let isModelPlaced = false;
-
-    const loadingEl = document.getElementById('loading');
-    const uiEl = document.getElementById('placement-ui');
-
-    init();
-
-    async function init() {
-      if (!('xr' in navigator)) return showError("WebXR not supported.");
-      if (!window.isSecureContext) return showError("WebXR requires HTTPS or localhost.");
-
-      setupScene();
-      const supported = await navigator.xr.isSessionSupported('immersive-ar');
-
-      if (supported) {
-        uiEl.textContent = "Tap to Start AR";
-        uiEl.style.display = 'block';
-        document.body.addEventListener('click', startAR, { once: true });
-        loadingEl.style.display = 'none';
-      } else {
-        showError("AR not supported on this device/browser.");
-      }
-    }
-
-    function setupScene() {
-      scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
-      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setPixelRatio(window.devicePixelRatio);
-      renderer.xr.enabled = true;
-      document.body.appendChild(renderer.domElement);
-
-      const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-      light.position.set(0.5, 1, 0.25);
-      scene.add(light);
-
-      createReticle();
-      loadModel();
-    }
-
-    function createReticle() {
-      reticle = new THREE.Mesh(
-        new THREE.RingGeometry(0.1, 0.12, 32).rotateX(-Math.PI / 2),
-        new THREE.MeshBasicMaterial({ color: 0x00ff00 })
-      );
-      reticle.matrixAutoUpdate = false;
-      reticle.visible = false;
-      scene.add(reticle);
-    }
-
-    function loadModel() {
-      const loader = new THREE.GLTFLoader();
-      loader.load(
-        "https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/Duck/glTF-Binary/Duck.glb",
-        (gltf) => {
-          model = gltf.scene;
-          model.scale.set(0.3, 0.3, 0.3);
-          if (gltf.animations.length) {
-            mixer = new THREE.AnimationMixer(model);
-            mixer.clipAction(gltf.animations[0]).play();
-          }
-        },
-        undefined,
-        (err) => showError("Model load error: " + err.message)
-      );
-    }
+    const message = document.getElementById('message');
 
     async function startAR() {
+      if (!window.isSecureContext) {
+        message.textContent = 'AR requires HTTPS. Please use a secure connection.';
+        return;
+      }
+
+      // Polyfill for older devices
+      if (!('xr' in navigator)) {
+        message.textContent = 'WebXR not supported on this device. Using fallback method...';
+        fallbackAR();  // We'll define later or link to an Onirix/MindAR experience
+        return;
+      }
+
       try {
-        xrSession = await navigator.xr.requestSession('immersive-ar', {
-          requiredFeatures: ['hit-test', 'local', 'viewer'],
-        });
-
-        xrSession.addEventListener('end', () => {
-          renderer.setAnimationLoop(null);
-          showError("AR Session ended. Tap to restart.");
-          document.body.addEventListener('click', startAR, { once: true });
-        });
-
-        await renderer.xr.setSession(xrSession);
-        referenceSpace = await xrSession.requestReferenceSpace('local');
-        viewerSpace = await xrSession.requestReferenceSpace('viewer');
-        hitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
-
-        uiEl.textContent = "Move to find surface...";
-        renderer.setAnimationLoop(render);
-      } catch (e) {
-        showError("AR start failed: " + e.message);
-      }
-    }
-
-    function render(timestamp, frame) {
-      if (!frame) return;
-
-      const pose = frame.getViewerPose(referenceSpace);
-      if (pose) {
-        const hits = frame.getHitTestResults(hitTestSource);
-        if (hits.length > 0 && !isModelPlaced) {
-          const hitPose = hits[0].getPose(referenceSpace);
-          reticle.visible = true;
-          reticle.matrix.fromArray(hitPose.transform.matrix);
-
-          if (!document.__modelClickSet) {
-            document.addEventListener('click', () => {
-              if (model && reticle.visible && !isModelPlaced) {
-                const placed = model.clone();
-                placed.position.setFromMatrixPosition(reticle.matrix);
-                placed.quaternion.setFromRotationMatrix(reticle.matrix);
-                scene.add(placed);
-                isModelPlaced = true;
-                uiEl.textContent = "Model placed!";
-              }
-            }, { once: true });
-
-            document.__modelClickSet = true;
-            uiEl.textContent = "Tap to place model";
-          }
-        } else {
-          reticle.visible = false;
+        const isSupported = await navigator.xr.isSessionSupported('immersive-ar');
+        if (!isSupported) {
+          message.textContent = 'AR not supported natively. Using fallback method...';
+          fallbackAR();
+          return;
         }
+
+        message.textContent = 'Starting AR experience...';
+        loadWebXR(); // Call main WebXR setup
+      } catch (err) {
+        message.textContent = 'AR check failed. Fallback initiated.';
+        fallbackAR();
       }
-
-      if (mixer) mixer.update(clock.getDelta());
-      renderer.render(scene, camera);
     }
 
-    function showError(msg) {
-      loadingEl.textContent = msg;
-      loadingEl.style.display = 'block';
-      uiEl.style.display = 'none';
-      console.error(msg);
+    function fallbackAR() {
+      // Option 1: Redirect to a fallback web AR scene (like Onirix/MindAR)
+      // window.location.href = "https://your-onirix-scene-url.com";
+
+      // Option 2: Show a QR code or fallback content
+      message.innerHTML = `
+        WebXR not supported.<br>
+        Try with Chrome (latest) or use our alternative AR viewer.<br><br>
+        <a href="https://your-fallback-ar-link.com" style="color:lightblue;">Launch fallback AR</a>
+      `;
     }
 
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+    function loadWebXR() {
+      // 👇 Insert your working WebXR + Three.js code here from earlier
+      message.style.display = 'none';
+      // TODO: Replace with full WebXR code with reticle/model
+    }
+
+    startAR();
   </script>
 </body>
 </html>
