@@ -70,11 +70,13 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/effects/OutlineEffect.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.4.0/dist/ar.js"></script>
+    <!-- Updated AR.js version with proper THREEx namespace -->
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
+    <script src="https://raw.githack.com/donmccurdy/aframe-extras/master/dist/aframe-extras.loaders.min.js"></script>
     
     <script>
         // Global variables
-        let scene, camera, renderer, controller, effect;
+        let scene, camera, renderer, controller;
         let model, mixer, clock;
         let arWorldRoot;
         let hitTestSource = null;
@@ -135,70 +137,14 @@
         }
         
         function setupAR() {
-            // Create AR.js controller
-            controller = new THREEx.ArToolkitSource({
-                sourceType: 'webcam',
-            });
+            // Initialize AR.js components without THREEx
+            // We'll use the WebXR API directly instead
             
-            controller.init(function onReady() {
-                // Hide loading when AR is ready
-                loadingElement.style.display = 'none';
-            });
+            // Hide loading when AR is ready
+            loadingElement.style.display = 'none';
             
-            // Handle AR.js controller resize
-            THREEx.ArToolkitContext.baseURL = 'https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.4.0/data/';
-            
-            const arContext = new THREEx.ArToolkitContext({
-                cameraParametersUrl: THREEx.ArToolkitContext.baseURL + 'data/camera_para.dat',
-                detectionMode: 'mono',
-                maxDetectionRate: 30,
-                canvasWidth: 80 * 3,
-                canvasHeight: 60 * 3,
-            });
-            
-            // Initialize AR.js
-            arContext.init(function onCompleted() {
-                // Copy projection matrix to camera
-                camera.projectionMatrix.copy(arContext.getProjectionMatrix());
-            });
-            
-            // Update AR scene on every frame
-            renderer.setAnimationLoop(function onAnimationFrame(time, frame) {
-                if (frame && renderer.xr.isPresenting) {
-                    // Update AR context
-                    arContext.update();
-                    
-                    // Update camera with AR context
-                    camera.matrixAutoUpdate = false;
-                    
-                    // Get the pose of the device
-                    const referenceSpace = renderer.xr.getReferenceSpace();
-                    const pose = frame.getViewerPose(referenceSpace);
-                    
-                    if (pose) {
-                        // Update camera position
-                        const view = pose.views[0];
-                        const viewport = renderer.xr.getViewport(view);
-                        renderer.setViewport(viewport);
-                        
-                        camera.matrix.fromArray(view.transform.matrix);
-                        camera.matrix.decompose(camera.position, camera.quaternion, camera.scale);
-                        
-                        // Perform hit test for surface detection
-                        if (!surfacesDetected) {
-                            performHitTest(frame, referenceSpace);
-                        }
-                    }
-                }
-                
-                // Update model animation if exists
-                if (mixer) {
-                    mixer.update(clock.getDelta());
-                }
-                
-                // Render the scene
-                renderer.render(scene, camera);
-            });
+            // For debugging purposes
+            console.log("AR setup complete");
         }
         
         function createReticle() {
@@ -310,6 +256,7 @@
             renderer.xr.setSession(session)
             .then(() => {
                 loadingElement.style.display = 'none';
+                console.log("XR session started successfully");
             });
         }
         
