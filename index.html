@@ -219,8 +219,8 @@
           
           // Load 3D model with retries
           if (!await this.loadModelWithRetry()) {
-            this.showFallback("Could not load 3D content.");
-            return;
+            // If all external sources fail, create a simple cube as fallback
+            this.createFallbackModel();
           }
           
           // Create surface visualization
@@ -233,6 +233,21 @@
           console.error("Initialization error:", error);
           this.showFallback(`Initialization failed: ${error.message}`);
         }
+      }
+      
+      createFallbackModel() {
+        // Create a simple cube as fallback model
+        const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+        const material = new THREE.MeshStandardMaterial({ 
+          color: 0x4285f4,
+          metalness: 0.5,
+          roughness: 0.5
+        });
+        
+        this.model = new THREE.Mesh(geometry, material);
+        this.model.scale.set(0.5, 0.5, 0.5);
+        
+        console.log("Created fallback cube model");
       }
       
       checkBasicCompatibility() {
@@ -339,8 +354,10 @@
       
       async loadModelWithRetry() {
         const modelUrls = [
-          // Primary model source
-          'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@2.0/~/2.0/Duck/glTF-Binary/Duck.glb',
+          // Primary model sources
+          'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@2.0/2.0/Duck/glTF-Binary/Duck.glb',
+          'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb',
+          'https://threejs.org/examples/models/gltf/Duck/glTF-Binary/Duck.glb',
           // Simple cube fallback
           'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/Box.glb'
         ];
@@ -352,7 +369,7 @@
           } catch (error) {
             console.warn(`Failed to load model from ${modelUrls[i]}:`, error);
             if (i === modelUrls.length - 1) {
-              throw new Error("All model sources failed");
+              return false; // Don't throw, we'll use fallback model
             }
           }
         }
