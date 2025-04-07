@@ -102,6 +102,24 @@
       font-size: 12px;
       z-index: 15;
     }
+    #ar-controls {
+      position: absolute;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      z-index: 5;
+    }
+    .control-button {
+      padding: 10px 15px;
+      background-color: rgba(0, 0, 0, 0.7);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -114,6 +132,10 @@
   </div>
   
   <div id="ar-ui">Point your camera at a flat surface</div>
+  <div id="ar-controls" style="display: none;">
+    <button class="control-button" id="reset-button">Reset</button>
+    <button class="control-button" id="change-model-button">Change Model</button>
+  </div>
   <div id="fallback-message"></div>
   <div id="browser-support"></div>
 
@@ -122,10 +144,8 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.min.js"></script>
   <!-- OrbitControls for 3D viewer mode -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
-  
-  <!-- WebXR polyfill with improved device support -->
+  <!-- Improved WebXR polyfill -->
   <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js"></script>
-  
   <!-- Hammer.js for better touch events -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
 
@@ -139,6 +159,9 @@
         this.statusMessage = document.getElementById('status-message');
         this.startButton = document.getElementById('start-button');
         this.arUI = document.getElementById('ar-ui');
+        this.arControls = document.getElementById('ar-controls');
+        this.resetButton = document.getElementById('reset-button');
+        this.changeModelButton = document.getElementById('change-model-button');
         this.fallbackMessage = document.getElementById('fallback-message');
         
         // Three.js variables
@@ -156,6 +179,12 @@
         
         // Model variables
         this.model = null;
+        this.currentModelIndex = 0;
+        this.modelUrls = [
+          'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@2.0/2.0/Duck/glTF-Binary/Duck.glb',
+          'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/Box.glb',
+          'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@2.0/2.0/FlightHelmet/glTF/FlightHelmet.glb'
+        ];
         this.mixer = null;
         this.clock = new THREE.Clock();
         this.isModelPlaced = false;
@@ -217,16 +246,46 @@
             return;
           }
           
-          if (!await this.loadModelWithRetry()) {
-            this.createFallbackModel();
-          }
-          
+          await this.loadModel(this.modelUrls[this.currentModelIndex]);
           this.createSurfaceVisualization();
+          
+          // Setup event listeners
+          this.resetButton.addEventListener('click', () => this.resetSession());
+          this.changeModelButton.addEventListener('click', () => this.changeModel());
+          
           await this.checkARSupportWithFallback();
           
         } catch (error) {
           console.error("Initialization error:", error);
           this.showFallback(`Initialization failed: ${error.message}`);
+        }
+      }
+      
+      async changeModel() {
+        try {
+          this.currentModelIndex = (this.currentModelIndex + 1) % this.modelUrls.length;
+          this.updateStatus("Loading new model...");
+          
+          // Remove current model if exists
+          if (this.model) {
+            this.scene.remove(this.model);
+            this.model = null;
+          }
+          
+          // Reset placement flag
+          this.isModelPlaced = false;
+          
+          await this.loadModel(this.modelUrls[this.currentModelIndex]);
+          
+          if (this.viewerMode) {
+            this.model.position.y = 0.5;
+            this.scene.add(this.model);
+          }
+          
+          this.updateStatus("Model loaded successfully");
+        } catch (error) {
+          console.error("Failed to change model:", error);
+          this.arUI.textContent = "Failed to change model";
         }
       }
       
@@ -285,12 +344,16 @@
           this.renderer.setSize(window.innerWidth, window.innerHeight);
           this.renderer.xr.enabled = true;
           
+          // Improved lighting
           const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
           this.scene.add(ambientLight);
           
           const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
           directionalLight.position.set(1, 1, 1);
           this.scene.add(directionalLight);
+          
+          const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x444422, 0.5);
+          this.scene.add(hemisphereLight);
           
           this.createReticle();
           this.setupTouchControls();
@@ -306,6 +369,7 @@
         try {
           this.hammer = new Hammer(this.canvas);
           this.hammer.get('pan').set({ direction: Hammer.DIRECTION_ALL });
+          this.hammer.get('pinch').set({ enable: true });
           this.hammer.get('tap').set({ taps: 1 });
           
           this.hammer.on('tap', (e) => {
@@ -316,7 +380,7 @@
           
           this.hammer.on('doubletap', () => {
             if (this.xrSession || this.viewerMode) {
-              this.resetSession();
+              this.changeModel();
             }
           });
           
@@ -327,27 +391,6 @@
               this.handleTap(e.clientX, e.clientY);
             }
           });
-        }
-      }
-      
-      async loadModelWithRetry() {
-        const modelUrls = [
-          'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@2.0/2.0/Duck/glTF-Binary/Duck.glb',
-          'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb',
-          'https://threejs.org/examples/models/gltf/Duck/glTF-Binary/Duck.glb',
-          'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/Box.glb'
-        ];
-        
-        for (let i = 0; i < modelUrls.length; i++) {
-          try {
-            await this.loadModel(modelUrls[i]);
-            return true;
-          } catch (error) {
-            console.warn(`Failed to load model from ${modelUrls[i]}:`, error);
-            if (i === modelUrls.length - 1) {
-              return false;
-            }
-          }
         }
       }
       
@@ -369,14 +412,18 @@
               (gltf) => {
                 this.model = gltf.scene;
                 
+                // Adjust scale based on model type
                 if (url.includes('Duck')) {
                   this.model.scale.set(0.5, 0.5, 0.5);
                 } else if (url.includes('Box')) {
                   this.model.scale.set(0.5, 0.5, 0.5);
+                } else if (url.includes('FlightHelmet')) {
+                  this.model.scale.set(0.1, 0.1, 0.1);
                 } else {
                   this.model.scale.set(0.2, 0.2, 0.2);
                 }
                 
+                // Set up animations if available
                 if (gltf.animations?.length) {
                   this.mixer = new THREE.AnimationMixer(this.model);
                   this.mixer.clipAction(gltf.animations[0]).play();
@@ -390,11 +437,14 @@
               },
               (error) => {
                 console.error("Model loading error:", error);
-                reject(new Error(`Failed to load model from ${url}`));
+                this.createFallbackModel();
+                resolve(); // Resolve with fallback model
               }
             );
           } catch (error) {
-            reject(new Error(`Model loading failed: ${error.message}`));
+            console.error("Model loading failed:", error);
+            this.createFallbackModel();
+            resolve(); // Resolve with fallback model
           }
         });
       }
@@ -457,6 +507,7 @@
             
             this.loadingScreen.style.display = 'none';
             this.arUI.style.display = 'block';
+            this.arControls.style.display = 'flex';
             this.arUI.textContent = "Basic AR mode - Objects will appear in front of camera";
             
             this.startRenderLoop();
@@ -483,7 +534,10 @@
           this.controls.enableDamping = true;
           this.controls.dampingFactor = 0.25;
           this.controls.screenSpacePanning = true;
+          this.controls.enableZoom = true;
+          this.controls.enablePan = true;
           
+          // Add ground plane
           const groundGeometry = new THREE.PlaneGeometry(10, 10);
           const groundMaterial = new THREE.MeshStandardMaterial({ 
             color: 0x333333,
@@ -493,13 +547,16 @@
           ground.rotation.x = -Math.PI / 2;
           this.scene.add(ground);
           
+          // Add the model
           if (this.model) {
             this.model.position.y = 0.5;
             this.scene.add(this.model);
           }
           
+          // Show viewer UI
           this.loadingScreen.style.display = 'none';
           this.arUI.style.display = 'block';
+          this.arControls.style.display = 'flex';
           this.arUI.textContent = "3D Viewer Mode - Drag to rotate, pinch to zoom";
           
           this.startRenderLoop();
@@ -558,13 +615,13 @@
           this.xrSession.addEventListener('end', () => this.onSessionEnded());
           await this.renderer.xr.setSession(this.xrSession);
           
-          // Initialize reference space and hit test source
           await this.initializeReferenceSpace();
           
           this.renderer.setAnimationLoop((time, frame) => this.onXRFrame(time, frame));
           
           this.loadingScreen.style.display = 'none';
           this.arUI.style.display = 'block';
+          this.arControls.style.display = 'flex';
           this.arUI.textContent = "Move your device to detect surfaces";
           
         } catch (error) {
@@ -588,7 +645,6 @@
               this.referenceSpace = await this.xrSession.requestReferenceSpace(type);
               console.log(`Successfully initialized reference space: ${type}`);
               
-              // Initialize hit test source for AR
               if (type !== 'viewer') {
                 try {
                   const viewerSpace = await this.xrSession.requestReferenceSpace('viewer');
@@ -814,6 +870,7 @@
           
           this.loadingScreen.style.display = 'flex';
           this.arUI.style.display = 'none';
+          this.arControls.style.display = 'none';
           this.updateStatus("AR session ended");
           this.startButton.style.display = 'block';
           this.startButton.textContent = "Start AR";
