@@ -151,7 +151,8 @@
         this.referenceSpace = null;
         this.hitTestSource = null;
         this.reticle = null;
-        this.surfaceMesh = null; // Added for surface visualization
+        this.surfaceMesh = null;
+        this.surfaceGrid = null; // Added for better surface visualization
         
         // Model variables
         this.model = null;
@@ -176,19 +177,31 @@
         this.scene.add(this.reticle);
       }
       
-      createSurfaceMesh() {
+      createSurfaceVisualization() {
         // Create a semi-transparent white plane to visualize detected surfaces
-        const geometry = new THREE.PlaneGeometry(1, 1);
-        const material = new THREE.MeshBasicMaterial({
+        const planeGeometry = new THREE.PlaneGeometry(1, 1);
+        const planeMaterial = new THREE.MeshBasicMaterial({
           color: 0xffffff,
-          opacity: 0.5,
+          opacity: 0.3,
           transparent: true,
           side: THREE.DoubleSide
         });
-        this.surfaceMesh = new THREE.Mesh(geometry, material);
+        this.surfaceMesh = new THREE.Mesh(planeGeometry, planeMaterial);
         this.surfaceMesh.visible = false;
         this.surfaceMesh.matrixAutoUpdate = false;
         this.scene.add(this.surfaceMesh);
+        
+        // Create a grid helper for better surface visualization
+        const gridSize = 1;
+        const gridDivisions = 10;
+        const gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0xffffff, 0xffffff);
+        gridHelper.material.opacity = 0.8;
+        gridHelper.material.transparent = true;
+        gridHelper.rotation.x = -Math.PI / 2;
+        gridHelper.position.y = 0.001; // Slightly above the plane to avoid z-fighting
+        this.surfaceGrid = gridHelper;
+        this.surfaceGrid.visible = false;
+        this.scene.add(this.surfaceGrid);
       }
       
       async init() {
@@ -210,8 +223,8 @@
             return;
           }
           
-          // Create surface visualization mesh
-          this.createSurfaceMesh();
+          // Create surface visualization
+          this.createSurfaceVisualization();
           
           // Check AR support with comprehensive fallbacks
           await this.checkARSupportWithFallback();
@@ -327,8 +340,6 @@
       async loadModelWithRetry() {
         const modelUrls = [
           // Primary model source
-          'all.glb',
-          // Fallback model source
           'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@2.0/~/2.0/Duck/glTF-Binary/Duck.glb',
           // Simple cube fallback
           'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/Box.glb'
@@ -643,6 +654,7 @@
               // If no hit test, show UI for basic placement
               this.reticle.visible = false;
               this.surfaceMesh.visible = false;
+              this.surfaceGrid.visible = false;
               if (!this.canvas.__placementListener) {
                 this.arUI.textContent = "Tap to place object in front of camera";
                 this.canvas.__placementListener = true;
@@ -680,14 +692,21 @@
               this.reticle.visible = true;
               this.reticle.matrix.fromArray(hitPose.transform.matrix);
               
-              // Update surface mesh to visualize detected surface
+              // Update surface visualization
               this.surfaceMesh.visible = true;
               this.surfaceMesh.matrix.fromArray(hitPose.transform.matrix);
               
-              // Scale the surface mesh based on distance to camera
+              this.surfaceGrid.visible = true;
+              this.surfaceGrid.matrix.fromArray(hitPose.transform.matrix);
+              
+              // Scale the surface visualization based on distance to camera
               const distance = this.camera.position.distanceTo(this.surfaceMesh.position);
-              this.surfaceMesh.scale.set(distance * 0.5, distance * 0.5, 1);
+              const scale = distance * 0.5;
+              this.surfaceMesh.scale.set(scale, scale, 1);
+              this.surfaceGrid.scale.set(scale, scale, 1);
+              
               this.surfaceMesh.updateMatrix();
+              this.surfaceGrid.updateMatrix();
               
               if (!this.canvas.__placementListener) {
                 this.arUI.textContent = "Surface detected! Tap to place object.";
@@ -697,6 +716,8 @@
           } else {
             this.reticle.visible = false;
             this.surfaceMesh.visible = false;
+            this.surfaceGrid.visible = false;
+            this.arUI.textContent = "Point at a flat surface to detect";
           }
         } catch (error) {
           console.warn("Hit test failed:", error);
@@ -739,6 +760,7 @@
         
         // Hide the surface visualization
         this.surfaceMesh.visible = false;
+        this.surfaceGrid.visible = false;
         this.reticle.visible = false;
         
         this.arUI.textContent = "Object placed! Move around to view.";
@@ -764,6 +786,7 @@
         
         // Hide surface visualization if visible
         this.surfaceMesh.visible = false;
+        this.surfaceGrid.visible = false;
         this.reticle.visible = false;
         
         this.arUI.textContent = "Object placed in front of camera!";
@@ -795,7 +818,7 @@
           
           // Clean up scene
           this.scene.traverse(child => {
-            if (child.isMesh && child !== this.reticle && child !== this.surfaceMesh) {
+            if (child.isMesh && child !== this.reticle && child !== this.surfaceMesh && child !== this.surfaceGrid) {
               this.scene.remove(child);
             }
           });
@@ -803,6 +826,7 @@
           // Reset variables
           this.reticle.visible = false;
           this.surfaceMesh.visible = false;
+          this.surfaceGrid.visible = false;
           this.isModelPlaced = false;
           this.hitTestSource = null;
           this.referenceSpace = null;
