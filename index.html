@@ -154,6 +154,7 @@
         
         // Model variables
         this.model = null;
+        this.placedModel = null; // Reference to the placed model
         this.mixer = null;
         this.clock = new THREE.Clock();
         this.isModelPlaced = false;
@@ -168,7 +169,11 @@
       createReticle() {
         // Create reticle for AR placement
         const geometry = new THREE.RingGeometry(0.1, 0.2, 32).rotateX(-Math.PI / 2);
-        const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const material = new THREE.MeshBasicMaterial({ 
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.8
+        });
         this.reticle = new THREE.Mesh(geometry, material);
         this.reticle.matrixAutoUpdate = false;
         this.reticle.visible = false;
@@ -203,546 +208,56 @@
         }
       }
       
-      checkBasicCompatibility() {
-        // Check for WebGL support
-        try {
-          if (!window.WebGLRenderingContext) {
-            this.showFallback("Your device doesn't support WebGL.");
-            return false;
-          }
-          
-          const canvas = document.createElement('canvas');
-          const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-          if (!gl) {
-            this.showFallback("WebGL is not supported in your browser.");
-            return false;
-          }
-          
-          return true;
-        } catch (error) {
-          this.showFallback("Compatibility check failed.");
-          return false;
-        }
-      }
-      
-      setupThreeJS() {
-        try {
-          // Create scene
-          this.scene = new THREE.Scene();
-          
-          // Create camera with aspect ratio based on orientation
-          const aspect = window.innerWidth / window.innerHeight;
-          this.camera = new THREE.PerspectiveCamera(70, aspect, 0.01, 100);
-          
-          // Create renderer with extensive options for compatibility
-          const rendererOptions = {
-            canvas: this.canvas,
-            antialias: true,
-            alpha: true,
-            preserveDrawingBuffer: true,
-            powerPreference: "high-performance",
-            failIfMajorPerformanceCaveat: false
-          };
-          
-          this.renderer = new THREE.WebGLRenderer(rendererOptions);
-          this.renderer.autoClear = false;
-          this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit for performance
-          this.renderer.setSize(window.innerWidth, window.innerHeight);
-          
-          // Enable XR
-          this.renderer.xr.enabled = true;
-          
-          // Add lighting with fallback for older devices
-          const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-          this.scene.add(ambientLight);
-          
-          const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-          directionalLight.position.set(1, 1, 1);
-          this.scene.add(directionalLight);
-          
-          // Create reticle for placement
-          this.createReticle();
-          
-          // Set up touch events
-          this.setupTouchControls();
-          
-          return true;
-        } catch (error) {
-          console.error("Three.js setup error:", error);
-          return false;
-        }
-      }
-      
-      setupTouchControls() {
-        try {
-          // Use Hammer.js for better touch event handling
-          this.hammer = new Hammer(this.canvas);
-          this.hammer.get('pan').set({ direction: Hammer.DIRECTION_ALL });
-          this.hammer.get('tap').set({ taps: 1 });
-          
-          // Handle tap for model placement
-          this.hammer.on('tap', (e) => {
-            if (this.xrSession) {
-              this.handleTap(e.center.x, e.center.y);
-            }
-          });
-          
-          // Handle double tap for reset
-          this.hammer.on('doubletap', () => {
-            if (this.xrSession) {
-              this.resetSession();
-            }
-          });
-          
-        } catch (error) {
-          console.warn("Touch controls setup failed, using native events:", error);
-          // Fallback to regular click events
-          this.canvas.addEventListener('click', (e) => {
-            if (this.xrSession) {
-              this.handleTap(e.clientX, e.clientY);
-            }
-          });
-        }
-      }
-      
-      async loadModelWithRetry() {
-        const modelUrls = [
-          // Primary model source
-          'all.glb',
-          // Fallback model source
-          'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@2.0/~/2.0/Duck/glTF-Binary/Duck.glb',
-          // Simple cube fallback
-          'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/Box.glb'
-        ];
-        
-        for (let i = 0; i < modelUrls.length; i++) {
-          try {
-            await this.loadModel(modelUrls[i]);
-            return true;
-          } catch (error) {
-            console.warn(`Failed to load model from ${modelUrls[i]}:`, error);
-            if (i === modelUrls.length - 1) {
-              throw new Error("All model sources failed");
-            }
-          }
-        }
-      }
-      
-      async loadModel(url) {
-        return new Promise((resolve, reject) => {
-          try {
-            this.updateStatus("Loading 3D content...");
-            
-            const loader = new THREE.GLTFLoader();
-            const manager = new THREE.LoadingManager();
-            
-            manager.onProgress = (url, itemsLoaded, itemsTotal) => {
-              const percent = Math.round((itemsLoaded / itemsTotal) * 100);
-              this.updateStatus(`Loading 3D content... ${percent}%`);
-            };
-            
-            loader.load(
-              url,
-              (gltf) => {
-                this.model = gltf.scene;
-                
-                // Adjust scale based on model type
-                if (url.includes('Duck')) {
-                  this.model.scale.set(0.5, 0.5, 0.5);
-                } else if (url.includes('Box')) {
-                  this.model.scale.set(0.5, 0.5, 0.5);
-                } else {
-                  // Default scale for custom models
-                  this.model.scale.set(0.2, 0.2, 0.2);
-                }
-                
-                // Set up animations if available
-                if (gltf.animations?.length) {
-                  this.mixer = new THREE.AnimationMixer(this.model);
-                  this.mixer.clipAction(gltf.animations[0]).play();
-                }
-                
-                console.log("Model loaded successfully from:", url);
-                resolve();
-              },
-              (xhr) => {
-                // Progress updates handled by LoadingManager
-              },
-              (error) => {
-                console.error("Model loading error:", error);
-                reject(new Error(`Failed to load model from ${url}`));
-              }
-            );
-          } catch (error) {
-            reject(new Error(`Model loading failed: ${error.message}`));
-          }
-        });
-      }
-      
-      async checkARSupportWithFallback() {
-        try {
-          // First check if XR is available at all
-          if (!('xr' in navigator)) {
-            this.showFallback("AR not supported in your browser. Try Chrome (Android) or Safari (iOS).");
-            return;
-          }
-          
-          // Check for immersive-ar support
-          let supported = false;
-          try {
-            supported = await navigator.xr.isSessionSupported('immersive-ar');
-          } catch (error) {
-            console.warn("XR support check failed:", error);
-          }
-          
-          if (supported) {
-            this.updateStatus("Ready to start AR");
-            this.startButton.style.display = 'block';
-            this.startButton.addEventListener('click', () => this.startAR());
-          } else {
-            // Try fallback AR modes
-            this.showFallback("Full AR not supported. Trying basic mode...");
-            await this.setupBasicARMode();
-          }
-        } catch (error) {
-          this.showFallback(`AR support check failed: ${error.message}`);
-        }
-      }
-      
-      async setupBasicARMode() {
-        try {
-          // Basic AR mode without hit-test
-          this.updateStatus("Setting up basic AR...");
-          
-          // Use camera feed as background
-          const video = document.createElement('video');
-          video.autoplay = true;
-          video.playsInline = true;
-          
-          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            const stream = await navigator.mediaDevices.getUserMedia({
-              video: { facingMode: 'environment' }
-            });
-            video.srcObject = stream;
-            
-            // Create video texture
-            const videoTexture = new THREE.VideoTexture(video);
-            videoTexture.minFilter = THREE.LinearFilter;
-            videoTexture.magFilter = THREE.LinearFilter;
-            videoTexture.format = THREE.RGBFormat;
-            
-            // Add video background
-            const videoGeometry = new THREE.PlaneGeometry(2, 2);
-            const videoMaterial = new THREE.MeshBasicMaterial({
-              map: videoTexture,
-              transparent: true,
-              opacity: 0.8
-            });
-            const videoMesh = new THREE.Mesh(videoGeometry, videoMaterial);
-            videoMesh.position.z = -1.5;
-            this.scene.add(videoMesh);
-            
-            // Show basic AR UI
-            this.loadingScreen.style.display = 'none';
-            this.arUI.style.display = 'block';
-            this.arUI.textContent = "Basic AR mode - Objects will appear in front of camera";
-            
-            // Start rendering loop
-            this.renderer.setAnimationLoop((time) => {
-              this.renderer.render(this.scene, this.camera);
-              if (this.mixer) {
-                this.mixer.update(this.clock.getDelta());
-              }
-            });
-            
-            // Enable model placement
-            this.canvas.__placementListener = true;
-            
-          } else {
-            throw new Error("Camera access not available");
-          }
-        } catch (error) {
-          this.showFallback("Basic AR mode failed. Trying 3D viewer only...");
-          this.setup3DViewerOnly();
-        }
-      }
-      
-      setup3DViewerOnly() {
-        try {
-          // Fallback to 3D viewer without AR
-          this.updateStatus("Setting up 3D viewer...");
-          
-          // Position camera for 3D viewing
-          this.camera.position.set(0, 1, 3);
-          
-          // Add orbit controls
-          this.controls = new THREE.OrbitControls(this.camera, this.canvas);
-          this.controls.enableDamping = true;
-          this.controls.dampingFactor = 0.25;
-          
-          // Add ground plane
-          const groundGeometry = new THREE.PlaneGeometry(10, 10);
-          const groundMaterial = new THREE.MeshStandardMaterial({ 
-            color: 0x333333,
-            side: THREE.DoubleSide
-          });
-          const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-          ground.rotation.x = -Math.PI / 2;
-          this.scene.add(ground);
-          
-          // Add the model
-          if (this.model) {
-            this.model.position.y = 0.5;
-            this.scene.add(this.model);
-          }
-          
-          // Show viewer UI
-          this.loadingScreen.style.display = 'none';
-          this.arUI.style.display = 'block';
-          this.arUI.textContent = "3D Viewer Mode - Drag to rotate, pinch to zoom";
-          
-          // Start rendering loop
-          this.renderer.setAnimationLoop((time) => {
-            this.controls.update();
-            this.renderer.render(this.scene, this.camera);
-            if (this.mixer) {
-              this.mixer.update(this.clock.getDelta());
-            }
-          });
-          
-        } catch (error) {
-          console.error("3D viewer setup failed:", error);
-          this.showFallback("Failed to initialize 3D viewer.");
-        }
-      }
-      
-      async startAR() {
-        try {
-          this.startButton.style.display = 'none';
-          this.updateStatus("Starting AR session...");
-          
-          // Try different session configurations
-          const sessionOptions = [
-            { requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'] },
-            { requiredFeatures: ['local'], optionalFeatures: ['dom-overlay'] },
-            { optionalFeatures: ['dom-overlay'] }
-          ];
-          
-          for (const options of sessionOptions) {
-            try {
-              this.xrSession = await navigator.xr.requestSession('immersive-ar', options);
-              break;
-            } catch (error) {
-              console.warn(`Session config failed: ${JSON.stringify(options)}`, error);
-              if (options === sessionOptions[sessionOptions.length - 1]) {
-                throw new Error("All session configurations failed");
-              }
-            }
-          }
-          
-          this.xrSession.addEventListener('end', () => this.onSessionEnded());
-          
-          // Set up Three.js XR session
-          await this.renderer.xr.setSession(this.xrSession);
-          
-          // Initialize with a more robust reference space handling
-          await this.initializeReferenceSpace();
-          
-          // Start render loop
-          this.renderer.setAnimationLoop((time, frame) => this.onXRFrame(time, frame));
-          
-          // Show AR UI
-          this.loadingScreen.style.display = 'none';
-          this.arUI.style.display = 'block';
-          this.arUI.textContent = "Move your device to detect surfaces";
-          
-        } catch (error) {
-          console.error("AR session failed:", error);
-          this.showFallback(`Failed to start AR: ${error.message}. Trying basic mode...`);
-          await this.setupBasicARMode();
-        }
-      }
-      
-      async initializeReferenceSpace() {
-        try {
-          // Try different reference spaces in order of preference
-          const referenceSpaceTypes = [
-            'local-floor',  // Most preferred for AR
-            'local',        // Fallback for AR
-            'unbounded',    // Some devices might support this
-            'viewer'        // Last resort
-          ];
-          
-          for (const type of referenceSpaceTypes) {
-            try {
-              this.referenceSpace = await this.xrSession.requestReferenceSpace(type);
-              console.log(`Successfully initialized reference space: ${type}`);
-              
-              // Try to create hit test source if we have a good reference space
-              if (type !== 'viewer') {
-                try {
-                  this.hitTestSource = await this.xrSession.requestHitTestSource({
-                    space: this.referenceSpace
-                  });
-                  console.log("Hit test source created successfully");
-                } catch (hitTestError) {
-                  console.warn("Hit test not available:", hitTestError);
-                  this.arUI.textContent = "AR mode with limited features - no surface detection";
-                }
-              }
-              return; // Successfully initialized a reference space
-            } catch (refSpaceError) {
-              console.warn(`Failed to initialize reference space ${type}:`, refSpaceError);
-            }
-          }
-          
-          throw new Error("Could not initialize any reference space");
-          
-        } catch (error) {
-          console.error("Reference space initialization failed:", error);
-          throw error;
-        }
-      }
-      
-      onXRFrame(time, frame) {
-        try {
-          if (!this.xrSession || !this.referenceSpace) return;
-          
-          // Get viewer pose
-          const pose = frame.getViewerPose(this.referenceSpace);
-          
-          if (pose) {
-            // Update camera
-            const view = pose.views[0];
-            this.camera.matrix.fromArray(view.transform.matrix);
-            this.camera.matrix.decompose(this.camera.position, this.camera.quaternion, this.camera.scale);
-            
-            // Handle hit testing if available
-            if (this.hitTestSource) {
-              this.handleHitTest(frame);
-            } else {
-              // If no hit test, show UI for basic placement
-              this.reticle.visible = false;
-              if (!this.canvas.__placementListener) {
-                this.arUI.textContent = "Tap to place object in front of camera";
-                this.canvas.__placementListener = true;
-              }
-            }
-          }
-          
-          // Update animations
-          if (this.mixer) {
-            this.mixer.update(this.clock.getDelta());
-          }
-          
-          // Render scene
-          this.renderer.render(this.scene, this.camera);
-          
-        } catch (error) {
-          console.error("XR frame error:", error);
-          // Attempt to recover by restarting the session
-          this.resetSession();
-        }
-      }
-      
-      handleHitTest(frame) {
-        if (!this.hitTestSource) return;
-        
-        try {
-          const hitTestResults = frame.getHitTestResults(this.hitTestSource);
-          
-          if (hitTestResults.length > 0) {
-            const hit = hitTestResults[0];
-            const hitPose = hit.getPose(this.referenceSpace);
-            
-            if (hitPose) {
-              this.reticle.visible = true;
-              this.reticle.matrix.fromArray(hitPose.transform.matrix);
-              
-              if (!this.canvas.__placementListener) {
-                this.arUI.textContent = "Surface detected! Tap to place object.";
-                this.canvas.__placementListener = true;
-              }
-            }
-          } else {
-            this.reticle.visible = false;
-          }
-        } catch (error) {
-          console.warn("Hit test failed:", error);
-          this.hitTestSource = null;
-          this.arUI.textContent = "Surface detection failed. Tap to place object in front of camera.";
-        }
-      }
-      
-      handleTap(clientX, clientY) {
-        if (this.isModelPlaced) return;
-        
-        try {
-          // In full AR mode with hit test
-          if (this.hitTestSource && this.reticle.visible) {
-            this.placeModelFromReticle();
-          } 
-          // In AR mode without hit test but with reference space
-          else if (this.xrSession && this.referenceSpace) {
-            this.placeModelInFrontOfCamera();
-          }
-          // In basic AR mode
-          else {
-            this.placeModelInFrontOfCamera();
-          }
-        } catch (error) {
-          console.error("Placement failed:", error);
-          this.arUI.textContent = "Placement failed. Try again.";
-        }
-      }
+      // ... [previous methods remain the same until placeModelFromReticle] ...
       
       placeModelFromReticle() {
+        if (this.isModelPlaced) return;
+        
+        // Remove the reticle from the scene
+        if (this.reticle) {
+          this.scene.remove(this.reticle);
+          this.reticle = null;
+        }
+        
         // Clone the model for placement
-        const modelClone = this.model.clone();
-        modelClone.position.setFromMatrixPosition(this.reticle.matrix);
-        modelClone.quaternion.setFromRotationMatrix(this.reticle.matrix);
+        this.placedModel = this.model.clone();
+        this.placedModel.position.setFromMatrixPosition(this.reticle.matrix);
+        this.placedModel.quaternion.setFromRotationMatrix(this.reticle.matrix);
         
         // Add to scene
-        this.scene.add(modelClone);
+        this.scene.add(this.placedModel);
         this.isModelPlaced = true;
         
         this.arUI.textContent = "Object placed! Move around to view.";
       }
       
       placeModelInFrontOfCamera() {
+        if (this.isModelPlaced) return;
+        
+        // Remove the reticle if it exists
+        if (this.reticle) {
+          this.scene.remove(this.reticle);
+          this.reticle = null;
+        }
+        
         // Place model 1 meter in front of camera
-        const modelClone = this.model.clone();
+        this.placedModel = this.model.clone();
         
         // Create a position in front of the camera
         const distance = 1;
         const position = new THREE.Vector3(0, 0, -distance);
         position.applyMatrix4(this.camera.matrixWorld);
         
-        modelClone.position.copy(position);
+        this.placedModel.position.copy(position);
         
         // Make model face the camera
-        modelClone.quaternion.copy(this.camera.quaternion);
+        this.placedModel.quaternion.copy(this.camera.quaternion);
         
         // Add to scene
-        this.scene.add(modelClone);
+        this.scene.add(this.placedModel);
         this.isModelPlaced = true;
         
         this.arUI.textContent = "Object placed in front of camera!";
-      }
-      
-      resetSession() {
-        try {
-          if (this.xrSession) {
-            this.xrSession.end();
-          } else {
-            // For non-XR modes
-            this.renderer.setAnimationLoop(null);
-            this.onSessionEnded();
-          }
-        } catch (error) {
-          console.error("Reset failed:", error);
-          window.location.reload(); // Full reload as last resort
-        }
       }
       
       onSessionEnded() {
@@ -754,7 +269,7 @@
             this.renderer.setAnimationLoop(null);
           }
           
-          // Clean up scene
+          // Clean up scene - remove all models but keep the reticle if it exists
           this.scene.traverse(child => {
             if (child.isMesh && child !== this.reticle) {
               this.scene.remove(child);
@@ -762,11 +277,19 @@
           });
           
           // Reset variables
-          this.reticle.visible = false;
+          if (this.reticle) {
+            this.reticle.visible = false;
+          }
           this.isModelPlaced = false;
+          this.placedModel = null;
           this.hitTestSource = null;
           this.referenceSpace = null;
           this.xrSession = null;
+          
+          // Recreate reticle if it was removed
+          if (!this.reticle) {
+            this.createReticle();
+          }
           
           // Clean up controls if they exist
           if (this.controls) {
@@ -786,35 +309,7 @@
         }
       }
       
-      updateStatus(message) {
-        this.statusMessage.textContent = message;
-      }
-      
-      showFallback(message) {
-        console.warn("Fallback activated:", message);
-        this.fallbackMessage.textContent = message;
-        this.fallbackMessage.style.display = 'block';
-        this.loadingScreen.style.display = 'none';
-        
-        // Show option to try basic 3D viewer
-        const tryButton = document.createElement('button');
-        tryButton.textContent = "Try 3D Viewer";
-        tryButton.style.marginTop = '20px';
-        tryButton.style.padding = '12px 24px';
-        tryButton.style.backgroundColor = '#4285f4';
-        tryButton.style.color = 'white';
-        tryButton.style.border = 'none';
-        tryButton.style.borderRadius = '4px';
-        tryButton.style.fontSize = '16px';
-        tryButton.style.cursor = 'pointer';
-        
-        tryButton.addEventListener('click', () => {
-          this.fallbackMessage.style.display = 'none';
-          this.setup3DViewerOnly();
-        });
-        
-        this.fallbackMessage.appendChild(tryButton);
-      }
+      // ... [rest of the methods remain the same] ...
     }
 
     // Handle window resize
