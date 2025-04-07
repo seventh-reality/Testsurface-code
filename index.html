@@ -516,184 +516,185 @@
         }
       }
       
-async startAR() {
-  try {
-    this.startButton.style.display = 'none';
-    this.updateStatus("Starting AR session...");
-    
-    // Try different session configurations
-    const sessionOptions = [
-      { requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'] },
-      { requiredFeatures: ['local'], optionalFeatures: ['dom-overlay'] },
-      { optionalFeatures: ['dom-overlay'] }
-    ];
-    
-    for (const options of sessionOptions) {
-      try {
-        this.xrSession = await navigator.xr.requestSession('immersive-ar', options);
-        break;
-      } catch (error) {
-        console.warn(`Session config failed: ${JSON.stringify(options)}`, error);
-        if (options === sessionOptions[sessionOptions.length - 1]) {
-          throw new Error("All session configurations failed");
-        }
-      }
-    }
-    
-    this.xrSession.addEventListener('end', () => this.onSessionEnded());
-    
-    // Set up Three.js XR session
-    await this.renderer.xr.setSession(this.xrSession);
-    
-    // Try to set up hit testing with better reference space handling
-    await this.setupHitTest();
-    
-    // Start render loop
-    this.renderer.setAnimationLoop((time, frame) => this.onXRFrame(time, frame));
-    
-    // Show AR UI
-    this.loadingScreen.style.display = 'none';
-    this.arUI.style.display = 'block';
-    this.arUI.textContent = "Move your device to detect surfaces";
-    
-  } catch (error) {
-    console.error("AR session failed:", error);
-    this.showFallback(`Failed to start AR: ${error.message}. Trying basic mode...`);
-    await this.setupBasicARMode();
-  }
-}
-      
-     async setupHitTest() {
-  try {
-    // Try different reference spaces in order of preference
-    const referenceSpaceTypes = [
-      'local-floor',  // Most preferred for AR
-      'local',        // Fallback for AR
-      'viewer',       // Last resort
-      'unbounded'     // Some devices might support this
-    ];
-    
-    for (const type of referenceSpaceTypes) {
-      try {
-        this.referenceSpace = await this.xrSession.requestReferenceSpace(type);
-        console.log(`Using reference space: ${type}`);
-        
-        // Try to create hit test source if we have a good reference space
-        if (type !== 'viewer') {
-          try {
-            this.hitTestSource = await this.xrSession.requestHitTestSource({
-              space: this.referenceSpace
-            });
-            return;
-          } catch (hitTestError) {
-            console.warn(`Hit test not available with ${type}:`, hitTestError);
+      async startAR() {
+        try {
+          this.startButton.style.display = 'none';
+          this.updateStatus("Starting AR session...");
+          
+          // Try different session configurations
+          const sessionOptions = [
+            { requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'] },
+            { requiredFeatures: ['local'], optionalFeatures: ['dom-overlay'] },
+            { optionalFeatures: ['dom-overlay'] }
+          ];
+          
+          for (const options of sessionOptions) {
+            try {
+              this.xrSession = await navigator.xr.requestSession('immersive-ar', options);
+              break;
+            } catch (error) {
+              console.warn(`Session config failed: ${JSON.stringify(options)}`, error);
+              if (options === sessionOptions[sessionOptions.length - 1]) {
+                throw new Error("All session configurations failed");
+              }
+            }
           }
-        }
-        return; // Use whatever reference space we got
-      } catch (refSpaceError) {
-        console.warn(`Reference space ${type} not supported:`, refSpaceError);
-      }
-    }
-    
-    // If we get here, no reference spaces worked
-    throw new Error("No supported reference space found");
-    
-  } catch (error) {
-    console.error("Hit test setup failed:", error);
-    this.arUI.textContent = "AR mode with limited features - no surface detection";
-    // Try to at least get a viewer reference space
-    try {
-      this.referenceSpace = await this.xrSession.requestReferenceSpace('viewer');
-    } catch (viewerError) {
-      console.error("Couldn't even get viewer reference space:", viewerError);
-      throw new Error("Couldn't initialize any AR features");
-    }
-  }
-}
-      
-     onXRFrame(time, frame) {
-  try {
-    if (!this.xrSession) return;
-    
-    // Get viewer pose
-    const pose = frame.getViewerPose(this.referenceSpace);
-    
-    if (pose) {
-      // Update camera
-      const view = pose.views[0];
-      this.camera.matrix.fromArray(view.transform.matrix);
-      this.camera.matrix.decompose(this.camera.position, this.camera.quaternion, this.camera.scale);
-      
-      // Handle hit testing if available
-      if (this.hitTestSource) {
-        this.handleHitTest(frame);
-      } else {
-        // If no hit test, show UI for basic placement
-        this.reticle.visible = false;
-        if (!this.canvas.__placementListener) {
-          this.arUI.textContent = "Tap to place object in front of camera";
-          this.canvas.__placementListener = true;
+          
+          this.xrSession.addEventListener('end', () => this.onSessionEnded());
+          
+          // Set up Three.js XR session
+          await this.renderer.xr.setSession(this.xrSession);
+          
+          // Initialize with a more robust reference space handling
+          await this.initializeReferenceSpace();
+          
+          // Start render loop
+          this.renderer.setAnimationLoop((time, frame) => this.onXRFrame(time, frame));
+          
+          // Show AR UI
+          this.loadingScreen.style.display = 'none';
+          this.arUI.style.display = 'block';
+          this.arUI.textContent = "Move your device to detect surfaces";
+          
+        } catch (error) {
+          console.error("AR session failed:", error);
+          this.showFallback(`Failed to start AR: ${error.message}. Trying basic mode...`);
+          await this.setupBasicARMode();
         }
       }
-    }
-    
-    // Update animations
-    if (this.mixer) {
-      this.mixer.update(this.clock.getDelta());
-    }
-    
-    // Render scene
-    this.renderer.render(this.scene, this.camera);
-    
-  } catch (error) {
-    console.error("XR frame error:", error);
-  }
-}
+      
+      async initializeReferenceSpace() {
+        try {
+          // Try different reference spaces in order of preference
+          const referenceSpaceTypes = [
+            'local-floor',  // Most preferred for AR
+            'local',        // Fallback for AR
+            'unbounded',    // Some devices might support this
+            'viewer'        // Last resort
+          ];
+          
+          for (const type of referenceSpaceTypes) {
+            try {
+              this.referenceSpace = await this.xrSession.requestReferenceSpace(type);
+              console.log(`Successfully initialized reference space: ${type}`);
+              
+              // Try to create hit test source if we have a good reference space
+              if (type !== 'viewer') {
+                try {
+                  this.hitTestSource = await this.xrSession.requestHitTestSource({
+                    space: this.referenceSpace
+                  });
+                  console.log("Hit test source created successfully");
+                } catch (hitTestError) {
+                  console.warn("Hit test not available:", hitTestError);
+                  this.arUI.textContent = "AR mode with limited features - no surface detection";
+                }
+              }
+              return; // Successfully initialized a reference space
+            } catch (refSpaceError) {
+              console.warn(`Failed to initialize reference space ${type}:`, refSpaceError);
+            }
+          }
+          
+          throw new Error("Could not initialize any reference space");
+          
+        } catch (error) {
+          console.error("Reference space initialization failed:", error);
+          throw error;
+        }
+      }
+      
+      onXRFrame(time, frame) {
+        try {
+          if (!this.xrSession || !this.referenceSpace) return;
+          
+          // Get viewer pose
+          const pose = frame.getViewerPose(this.referenceSpace);
+          
+          if (pose) {
+            // Update camera
+            const view = pose.views[0];
+            this.camera.matrix.fromArray(view.transform.matrix);
+            this.camera.matrix.decompose(this.camera.position, this.camera.quaternion, this.camera.scale);
+            
+            // Handle hit testing if available
+            if (this.hitTestSource) {
+              this.handleHitTest(frame);
+            } else {
+              // If no hit test, show UI for basic placement
+              this.reticle.visible = false;
+              if (!this.canvas.__placementListener) {
+                this.arUI.textContent = "Tap to place object in front of camera";
+                this.canvas.__placementListener = true;
+              }
+            }
+          }
+          
+          // Update animations
+          if (this.mixer) {
+            this.mixer.update(this.clock.getDelta());
+          }
+          
+          // Render scene
+          this.renderer.render(this.scene, this.camera);
+          
+        } catch (error) {
+          console.error("XR frame error:", error);
+          // Attempt to recover by restarting the session
+          this.resetSession();
+        }
+      }
       
       handleHitTest(frame) {
         if (!this.hitTestSource) return;
         
-        const hitTestResults = frame.getHitTestResults(this.hitTestSource);
-        
-        if (hitTestResults.length > 0) {
-          const hit = hitTestResults[0];
-          const hitPose = hit.getPose(this.referenceSpace);
+        try {
+          const hitTestResults = frame.getHitTestResults(this.hitTestSource);
           
-          if (hitPose) {
-            this.reticle.visible = true;
-            this.reticle.matrix.fromArray(hitPose.transform.matrix);
+          if (hitTestResults.length > 0) {
+            const hit = hitTestResults[0];
+            const hitPose = hit.getPose(this.referenceSpace);
             
-            if (!this.canvas.__placementListener) {
-              this.arUI.textContent = "Surface detected! Tap to place object.";
-              this.canvas.__placementListener = true;
+            if (hitPose) {
+              this.reticle.visible = true;
+              this.reticle.matrix.fromArray(hitPose.transform.matrix);
+              
+              if (!this.canvas.__placementListener) {
+                this.arUI.textContent = "Surface detected! Tap to place object.";
+                this.canvas.__placementListener = true;
+              }
             }
+          } else {
+            this.reticle.visible = false;
           }
-        } else {
-          this.reticle.visible = false;
+        } catch (error) {
+          console.warn("Hit test failed:", error);
+          this.hitTestSource = null;
+          this.arUI.textContent = "Surface detection failed. Tap to place object in front of camera.";
         }
       }
       
-     handleTap(clientX, clientY) {
-  if (this.isModelPlaced) return;
-  
-  try {
-    // In full AR mode with hit test
-    if (this.hitTestSource && this.reticle.visible) {
-      this.placeModelFromReticle();
-    } 
-    // In AR mode without hit test but with reference space
-    else if (this.xrSession && this.referenceSpace) {
-      this.placeModelInFrontOfCamera();
-    }
-    // In basic AR mode
-    else {
-      this.placeModelInFrontOfCamera();
-    }
-  } catch (error) {
-    console.error("Placement failed:", error);
-    this.arUI.textContent = "Placement failed. Try again.";
-  }
-}
+      handleTap(clientX, clientY) {
+        if (this.isModelPlaced) return;
+        
+        try {
+          // In full AR mode with hit test
+          if (this.hitTestSource && this.reticle.visible) {
+            this.placeModelFromReticle();
+          } 
+          // In AR mode without hit test but with reference space
+          else if (this.xrSession && this.referenceSpace) {
+            this.placeModelInFrontOfCamera();
+          }
+          // In basic AR mode
+          else {
+            this.placeModelInFrontOfCamera();
+          }
+        } catch (error) {
+          console.error("Placement failed:", error);
+          this.arUI.textContent = "Placement failed. Try again.";
+        }
+      }
       
       placeModelFromReticle() {
         // Clone the model for placement
@@ -837,6 +838,11 @@ async startAR() {
 
     // Initialize the application when the page loads
     window.addEventListener('load', () => {
+      // Initialize the WebXR polyfill first
+      if (typeof WebXRPolyfill !== 'undefined') {
+        new WebXRPolyfill();
+      }
+      
       // Feature detection and compatibility checks
       const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
