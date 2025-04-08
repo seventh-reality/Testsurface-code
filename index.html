@@ -17,149 +17,296 @@
             border-radius: 5px;
             font-family: Arial, sans-serif;
         }
-        #arjs-video {
+        #loading {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            z-index: -1;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 20px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+            text-align: center;
         }
     </style>
 </head>
 <body>
     <div id="info">Move your device to detect surfaces. Tap to place object.</div>
+    <div id="loading">Initializing AR, please wait...</div>
+    
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.3.0/dist/ar.js"></script>
     
     <script>
-        // Initialize Three.js scene
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
-        document.body.appendChild(renderer.domElement);
+        // Global variables
+        let scene, camera, renderer;
+        let arToolkitSource, arToolkitContext;
+        let reticle, placedObjects = [];
+        let hitTestPlane, raycaster;
+        let isInitialized = false;
 
-        // Add a light to the scene
-        const light = new THREE.AmbientLight(0xffffff, 1.0);
-        scene.add(light);
+        // Initialize the application
+        init();
 
-        // Add directional light
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(1, 1, 1);
-        scene.add(directionalLight);
+        function init() {
+            // Initialize Three.js
+            initThreeJS();
+            
+            // Initialize AR.js
+            initARJS();
+            
+            // Set up event listeners
+            setupEventListeners();
+            
+            // Start animation loop
+            animate();
+        }
 
-        // Create a reticle for surface placement
-        const reticleGeometry = new THREE.RingGeometry(0.15, 0.2, 32);
-        const reticleMaterial = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
-            transparent: true,
-            opacity: 0.8,
-            side: THREE.DoubleSide
-        });
-        const reticle = new THREE.Mesh(reticleGeometry, reticleMaterial);
-        reticle.rotation.x = -Math.PI / 2;
-        reticle.matrixAutoUpdate = false;
-        reticle.visible = false;
-        scene.add(reticle);
+        function initThreeJS() {
+            // Create scene
+            scene = new THREE.Scene();
+            
+            // Create camera
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true, 
+                alpha: true,
+                precision: 'highp'
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            document.body.appendChild(renderer.domElement);
+            
+            // Add lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(1, 1, 1);
+            scene.add(directionalLight);
+            
+            // Create reticle for surface placement
+            createReticle();
+            
+            // Create hit test plane (invisible plane for raycasting)
+            hitTestPlane = new THREE.Mesh(
+                new THREE.PlaneGeometry(100, 100),
+                new THREE.MeshBasicMaterial({ visible: false })
+            );
+            hitTestPlane.rotation.x = -Math.PI / 2;
+            scene.add(hitTestPlane);
+            
+            // Create raycaster for hit testing
+            raycaster = new THREE.Raycaster();
+        }
 
-        // Object to place on surfaces
-        let placedObject = null;
+        function createReticle() {
+            const ringGeometry = new THREE.RingGeometry(0.1, 0.15, 32);
+            const dotGeometry = new THREE.CircleGeometry(0.03, 32);
+            
+            const ringMaterial = new THREE.MeshBasicMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.8,
+                side: THREE.DoubleSide
+            });
+            
+            const dotMaterial = new THREE.MeshBasicMaterial({
+                color: 0x00ff00,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            const reticleGroup = new THREE.Group();
+            const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+            const dot = new THREE.Mesh(dotGeometry, dotMaterial);
+            
+            ring.rotation.x = -Math.PI / 2;
+            dot.rotation.x = -Math.PI / 2;
+            dot.position.y = 0.001; // Slightly above the ring
+            
+            reticleGroup.add(ring);
+            reticleGroup.add(dot);
+            reticleGroup.visible = false;
+            
+            scene.add(reticleGroup);
+            reticle = reticleGroup;
+        }
 
-        // Create video source
-        const video = document.createElement('video');
-        video.id = 'arjs-video';
-        video.autoplay = true;
-        video.playsinline = true;
-        document.body.appendChild(video);
+        function initARJS() {
+            // Create AR source (webcam)
+            arToolkitSource = new THREEx.ArToolkitSource({
+                sourceType: 'webcam',
+                sourceWidth: window.innerWidth,
+                sourceHeight: window.innerHeight,
+                displayWidth: window.innerWidth,
+                displayHeight: window.innerHeight
+            });
+            
+            // Initialize AR context (SLAM-like tracking)
+            arToolkitContext = new THREEx.ArToolkitContext({
+                cameraParametersUrl: 'https://ar-js-org.github.io/AR.js/data/data/camera_para.dat',
+                detectionMode: 'mono',
+                maxDetectionRate: 60,
+                canvasWidth: window.innerWidth,
+                canvasHeight: window.innerHeight,
+                debug: false
+            });
+            
+            // Handle source initialization
+            arToolkitSource.init(() => {
+                arToolkitSource.onResizeElement();
+                arToolkitSource.copyElementSizeTo(renderer.domElement);
+                
+                // Start camera stream
+                startCamera();
+                
+                // Initialize AR context
+                arToolkitContext.init(() => {
+                    camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+                    isInitialized = true;
+                    document.getElementById('loading').style.display = 'none';
+                });
+            });
+        }
 
-        // Initialize AR.js with SLAM
-        const arToolkitSource = new THREEx.ArToolkitSource({
-            sourceType: 'webcam',
-        });
+        function startCamera() {
+            navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    facingMode: 'environment',
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                } 
+            })
+            .then(stream => {
+                arToolkitSource.domElement.srcObject = stream;
+                arToolkitSource.domElement.onloadedmetadata = () => {
+                    arToolkitSource.domElement.play();
+                };
+            })
+            .catch(err => {
+                console.error("Camera error:", err);
+                document.getElementById('loading').textContent = 
+                    "Could not access camera. Please ensure you've granted camera permissions and try again.";
+            });
+        }
 
-        const arToolkitContext = new THREEx.ArToolkitContext({
-            cameraParametersUrl: 'https://ar-js-org.github.io/AR.js/data/data/camera_para.dat',
-            detectionMode: 'mono',
-        });
+        function setupEventListeners() {
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('click', onTap);
+        }
 
-        // Handle window resize
-        window.addEventListener('resize', () => {
+        function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
-            arToolkitSource.onResizeElement();
-            arToolkitSource.copyElementSizeTo(renderer.domElement);
-        });
-
-        // Initialize AR.js
-        arToolkitSource.init(() => {
-            arToolkitSource.onResizeElement();
-            arToolkitSource.copyElementSizeTo(renderer.domElement);
             
-            arToolkitContext.init(() => {
-                camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
-            });
-        });
-
-        // Request camera access
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(function(stream) {
-                video.srcObject = stream;
-                video.onloadedmetadata = function(e) {
-                    video.play();
-                };
-            })
-            .catch(function(err) {
-                console.error("Camera error: ", err);
-                document.getElementById('info').textContent = "Could not access camera. Please ensure you've granted camera permissions.";
-            });
-
-        // Tap to place object
-        window.addEventListener('click', (event) => {
-            if (reticle.visible && !placedObject) {
-                // Create a simple cube to place
-                const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
-                const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
-                const cube = new THREE.Mesh(geometry, material);
-                
-                // Position the cube at the reticle's position
-                cube.position.copy(reticle.position);
-                cube.quaternion.copy(reticle.quaternion);
-                scene.add(cube);
-                
-                placedObject = cube;
+            if (arToolkitSource) {
+                arToolkitSource.onResizeElement();
+                arToolkitSource.copyElementSizeTo(renderer.domElement);
             }
-        });
+        }
 
-        // Animation loop
+        function onTap(event) {
+            if (!reticle.visible || !isInitialized) return;
+            
+            // Create a 3D object at the reticle position
+            createObjectAtPosition(reticle.position, reticle.quaternion);
+        }
+
+        function createObjectAtPosition(position, quaternion) {
+            // Create a more interesting object than just a cube
+            const geometry = new THREE.ConeGeometry(0.05, 0.1, 32);
+            const material = new THREE.MeshStandardMaterial({ 
+                color: new THREE.Color().setHSL(Math.random(), 0.7, 0.5),
+                roughness: 0.2,
+                metalness: 0.3
+            });
+            
+            const object = new THREE.Mesh(geometry, material);
+            object.position.copy(position);
+            object.quaternion.copy(quaternion);
+            
+            // Add some animation properties
+            object.userData = {
+                scale: 1,
+                pulseDirection: 1,
+                rotationSpeed: Math.random() * 0.02 - 0.01
+            };
+            
+            scene.add(object);
+            placedObjects.push(object);
+            
+            // Limit the number of placed objects
+            if (placedObjects.length > 10) {
+                const oldObject = placedObjects.shift();
+                scene.remove(oldObject);
+            }
+        }
+
         function animate() {
             requestAnimationFrame(animate);
             
-            // Update AR.js tracking
-            if (arToolkitContext.ready) {
-                camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
-                
-                // Update reticle position based on AR tracking
-                // This is a simplified version - in a real app you'd use actual tracking data
-                if (Math.random() > 0.95) {
-                    reticle.position.set(
-                        (Math.random() - 0.5) * 2,
-                        0,
-                        (Math.random() - 0.5) * 2
-                    );
-                    reticle.visible = true;
-                }
-            }
+            if (!isInitialized) return;
             
+            // Update AR tracking
+            updateARTracking();
+            
+            // Update placed objects
+            updatePlacedObjects();
+            
+            // Render scene
             renderer.render(scene, camera);
         }
-        
-        animate();
+
+        function updateARTracking() {
+            if (arToolkitContext.ready) {
+                // Update projection matrix
+                camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+                
+                // Simulate SLAM-like surface detection
+                // In a real implementation, this would use actual tracking data
+                if (Math.random() > 0.97) {
+                    // Random position for demo purposes
+                    const x = (Math.random() - 0.5) * 2;
+                    const z = (Math.random() - 0.5) * 2;
+                    
+                    // Perform "hit test" by checking if the position is on our invisible plane
+                    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                    const intersects = raycaster.intersectObject(hitTestPlane);
+                    
+                    if (intersects.length > 0) {
+                        const point = intersects[0].point;
+                        reticle.position.copy(point);
+                        reticle.quaternion.copy(camera.quaternion);
+                        reticle.visible = true;
+                    }
+                }
+            }
+        }
+
+        function updatePlacedObjects() {
+            // Animate placed objects
+            placedObjects.forEach(obj => {
+                // Pulsing animation
+                obj.userData.scale += 0.01 * obj.userData.pulseDirection;
+                if (obj.userData.scale > 1.2 || obj.userData.scale < 0.8) {
+                    obj.userData.pulseDirection *= -1;
+                }
+                
+                // Apply scale
+                obj.scale.setScalar(obj.userData.scale);
+                
+                // Rotation
+                obj.rotation.y += obj.userData.rotationSpeed;
+            });
+        }
     </script>
 </body>
 </html>
