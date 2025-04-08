@@ -70,13 +70,6 @@
         // Object to place on surfaces
         let placedObject = null;
 
-        // Initialize AR.js with SLAM
-        const arjs = new ARjs({
-            trackingMethod: 'best', // Uses SLAM when available
-            patternRatio: 0.5,
-            debug: false
-        });
-
         // Create video source
         const video = document.createElement('video');
         video.id = 'arjs-video';
@@ -84,32 +77,47 @@
         video.playsinline = true;
         document.body.appendChild(video);
 
-        // Request camera access
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(function(stream) {
-                video.srcObject = stream;
-                video.onloadedmetadata = function(e) {
-                    video.play();
-                    
-                    // Initialize AR.js with the video stream
-                    arjs.init(renderer, camera, scene, video);
-                    
-                    // Start the AR session
-                    arjs.start();
-                };
-            })
-            .catch(function(err) {
-                console.error("Camera error: ", err);
-                document.getElementById('info').textContent = "Could not access camera. Please ensure you've granted camera permissions.";
-            });
+        // Initialize AR.js with SLAM
+        const arToolkitSource = new THREEx.ArToolkitSource({
+            sourceType: 'webcam',
+        });
+
+        const arToolkitContext = new THREEx.ArToolkitContext({
+            cameraParametersUrl: 'https://ar-js-org.github.io/AR.js/data/data/camera_para.dat',
+            detectionMode: 'mono',
+        });
 
         // Handle window resize
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
-            arjs.resize();
+            arToolkitSource.onResizeElement();
+            arToolkitSource.copyElementSizeTo(renderer.domElement);
         });
+
+        // Initialize AR.js
+        arToolkitSource.init(() => {
+            arToolkitSource.onResizeElement();
+            arToolkitSource.copyElementSizeTo(renderer.domElement);
+            
+            arToolkitContext.init(() => {
+                camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+            });
+        });
+
+        // Request camera access
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(function(stream) {
+                video.srcObject = stream;
+                video.onloadedmetadata = function(e) {
+                    video.play();
+                };
+            })
+            .catch(function(err) {
+                console.error("Camera error: ", err);
+                document.getElementById('info').textContent = "Could not access camera. Please ensure you've granted camera permissions.";
+            });
 
         // Tap to place object
         window.addEventListener('click', (event) => {
@@ -133,22 +141,18 @@
             requestAnimationFrame(animate);
             
             // Update AR.js tracking
-            if (arjs.session) {
-                arjs.update();
+            if (arToolkitContext.ready) {
+                camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
                 
                 // Update reticle position based on AR tracking
                 // This is a simplified version - in a real app you'd use actual tracking data
-                const trackingState = arjs.getTrackingState();
-                if (trackingState === 'tracking') {
-                    // Simulate surface detection
-                    if (Math.random() > 0.95) {
-                        reticle.position.set(
-                            (Math.random() - 0.5) * 2,
-                            0,
-                            (Math.random() - 0.5) * 2
-                        );
-                        reticle.visible = true;
-                    }
+                if (Math.random() > 0.95) {
+                    reticle.position.set(
+                        (Math.random() - 0.5) * 2,
+                        0,
+                        (Math.random() - 0.5) * 2
+                    );
+                    reticle.visible = true;
                 }
             }
             
