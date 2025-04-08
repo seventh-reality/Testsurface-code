@@ -17,6 +17,15 @@
             border-radius: 5px;
             font-family: Arial, sans-serif;
         }
+        #arjs-video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: -1;
+        }
     </style>
 </head>
 <body>
@@ -35,33 +44,6 @@
         renderer.setPixelRatio(window.devicePixelRatio);
         document.body.appendChild(renderer.domElement);
 
-        // AR.js configuration for SLAM-based tracking
-        const arToolkitSource = new THREEx.ArToolkitSource({
-            sourceType: 'webcam',
-        });
-
-        const arToolkitContext = new THREEx.ArToolkitContext({
-            cameraParametersUrl: 'https://ar-js-org.github.io/AR.js/data/data/camera_para.dat',
-            detectionMode: 'mono', // Can be 'color', 'mono', or 'color_and_mono'
-            maxDetectionRate: 60,
-            canvasWidth: 80 * 3,
-            canvasHeight: 60 * 3,
-        });
-
-        // Initialize AR.js
-        arToolkitSource.init(() => {
-            arToolkitContext.init(() => {
-                camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
-            });
-        });
-
-        // Handle window resize
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-
         // Add a light to the scene
         const light = new THREE.AmbientLight(0xffffff, 1.0);
         scene.add(light);
@@ -71,7 +53,7 @@
         directionalLight.position.set(1, 1, 1);
         scene.add(directionalLight);
 
-        // Create a reticle for surface placement (similar to ARCore/ARKit)
+        // Create a reticle for surface placement
         const reticleGeometry = new THREE.RingGeometry(0.15, 0.2, 32);
         const reticleMaterial = new THREE.MeshBasicMaterial({
             color: 0xffffff,
@@ -88,8 +70,49 @@
         // Object to place on surfaces
         let placedObject = null;
 
+        // Initialize AR.js with SLAM
+        const arjs = new ARjs({
+            trackingMethod: 'best', // Uses SLAM when available
+            patternRatio: 0.5,
+            debug: false
+        });
+
+        // Create video source
+        const video = document.createElement('video');
+        video.id = 'arjs-video';
+        video.autoplay = true;
+        video.playsinline = true;
+        document.body.appendChild(video);
+
+        // Request camera access
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(function(stream) {
+                video.srcObject = stream;
+                video.onloadedmetadata = function(e) {
+                    video.play();
+                    
+                    // Initialize AR.js with the video stream
+                    arjs.init(renderer, camera, scene, video);
+                    
+                    // Start the AR session
+                    arjs.start();
+                };
+            })
+            .catch(function(err) {
+                console.error("Camera error: ", err);
+                document.getElementById('info').textContent = "Could not access camera. Please ensure you've granted camera permissions.";
+            });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            arjs.resize();
+        });
+
         // Tap to place object
-        window.addEventListener('click', () => {
+        window.addEventListener('click', (event) => {
             if (reticle.visible && !placedObject) {
                 // Create a simple cube to place
                 const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
@@ -109,19 +132,23 @@
         function animate() {
             requestAnimationFrame(animate);
             
-            // Update AR.js
-            if (arToolkitSource.ready) {
-                arToolkitContext.update(arToolkitSource.domElement);
+            // Update AR.js tracking
+            if (arjs.session) {
+                arjs.update();
                 
-                // Update reticle position (simulating surface detection)
-                // In a real SLAM implementation, this would come from the AR system
-                if (Math.random() > 0.95) { // Simulate intermittent surface detection
-                    reticle.position.set(
-                        (Math.random() - 0.5) * 2,
-                        0,
-                        (Math.random() - 0.5) * 2
-                    );
-                    reticle.visible = true;
+                // Update reticle position based on AR tracking
+                // This is a simplified version - in a real app you'd use actual tracking data
+                const trackingState = arjs.getTrackingState();
+                if (trackingState === 'tracking') {
+                    // Simulate surface detection
+                    if (Math.random() > 0.95) {
+                        reticle.position.set(
+                            (Math.random() - 0.5) * 2,
+                            0,
+                            (Math.random() - 0.5) * 2
+                        );
+                        reticle.visible = true;
+                    }
                 }
             }
             
