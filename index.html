@@ -35,10 +35,12 @@
     <div id="info">Move your device to detect surfaces. Tap to place object.</div>
     <div id="loading">Initializing AR, please wait...</div>
     
+    <!-- Using specific versions that work well together -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.3.0/dist/ar.js"></script>
+    <!-- Using AR.js version that exposes THREEx properly -->
+    <script src="https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.2.0/dist/ar.js"></script>
     
     <script>
         // Global variables
@@ -52,6 +54,13 @@
         init();
 
         function init() {
+            // First check if THREEx is available
+            if (typeof THREEx === 'undefined') {
+                document.getElementById('loading').textContent = 
+                    "Error: AR.js library not loaded properly. Please refresh the page.";
+                return;
+            }
+
             // Initialize Three.js
             initThreeJS();
             
@@ -185,9 +194,12 @@
                 } 
             })
             .then(stream => {
-                arToolkitSource.domElement.srcObject = stream;
-                arToolkitSource.domElement.onloadedmetadata = () => {
-                    arToolkitSource.domElement.play();
+                const video = document.createElement('video');
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    video.play();
+                    // Assign to AR.js source
+                    arToolkitSource.domElement = video;
                 };
             })
             .catch(err => {
@@ -273,10 +285,6 @@
                 // Simulate SLAM-like surface detection
                 // In a real implementation, this would use actual tracking data
                 if (Math.random() > 0.97) {
-                    // Random position for demo purposes
-                    const x = (Math.random() - 0.5) * 2;
-                    const z = (Math.random() - 0.5) * 2;
-                    
                     // Perform "hit test" by checking if the position is on our invisible plane
                     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
                     const intersects = raycaster.intersectObject(hitTestPlane);
