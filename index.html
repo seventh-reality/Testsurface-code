@@ -35,12 +35,42 @@
     <div id="info">Move your device to detect surfaces. Tap to place object.</div>
     <div id="loading">Initializing AR, please wait...</div>
     
-    <!-- Using specific versions that work well together -->
+    <!-- Load Three.js first -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <!-- Using AR.js version that exposes THREEx properly -->
-    <script src="https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.2.0/dist/ar.js"></script>
+    
+    <!-- Load AR.js with a fallback -->
+    <script>
+        // Function to load AR.js with error handling
+        function loadARJS() {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.2.0/dist/ar.js';
+                script.onload = () => {
+                    if (typeof THREEx !== 'undefined') {
+                        resolve();
+                    } else {
+                        reject(new Error('AR.js loaded but THREEx not defined'));
+                    }
+                };
+                script.onerror = () => reject(new Error('Failed to load AR.js'));
+                document.head.appendChild(script);
+            });
+        }
+
+        // Main initialization
+        loadARJS()
+            .then(() => {
+                // AR.js loaded successfully, initialize the app
+                init();
+            })
+            .catch(error => {
+                console.error('AR.js loading error:', error);
+                document.getElementById('loading').textContent = 
+                    "Error: Could not load AR components. Please check your internet connection and refresh the page.";
+            });
+    </script>
     
     <script>
         // Global variables
@@ -50,17 +80,7 @@
         let hitTestPlane, raycaster;
         let isInitialized = false;
 
-        // Initialize the application
-        init();
-
         function init() {
-            // First check if THREEx is available
-            if (typeof THREEx === 'undefined') {
-                document.getElementById('loading').textContent = 
-                    "Error: AR.js library not loaded properly. Please refresh the page.";
-                return;
-            }
-
             // Initialize Three.js
             initThreeJS();
             
@@ -138,7 +158,7 @@
             
             ring.rotation.x = -Math.PI / 2;
             dot.rotation.x = -Math.PI / 2;
-            dot.position.y = 0.001; // Slightly above the ring
+            dot.position.y = 0.001;
             
             reticleGroup.add(ring);
             reticleGroup.add(dot);
@@ -149,40 +169,46 @@
         }
 
         function initARJS() {
-            // Create AR source (webcam)
-            arToolkitSource = new THREEx.ArToolkitSource({
-                sourceType: 'webcam',
-                sourceWidth: window.innerWidth,
-                sourceHeight: window.innerHeight,
-                displayWidth: window.innerWidth,
-                displayHeight: window.innerHeight
-            });
-            
-            // Initialize AR context (SLAM-like tracking)
-            arToolkitContext = new THREEx.ArToolkitContext({
-                cameraParametersUrl: 'https://ar-js-org.github.io/AR.js/data/data/camera_para.dat',
-                detectionMode: 'mono',
-                maxDetectionRate: 60,
-                canvasWidth: window.innerWidth,
-                canvasHeight: window.innerHeight,
-                debug: false
-            });
-            
-            // Handle source initialization
-            arToolkitSource.init(() => {
-                arToolkitSource.onResizeElement();
-                arToolkitSource.copyElementSizeTo(renderer.domElement);
-                
-                // Start camera stream
-                startCamera();
+            try {
+                // Create AR source (webcam)
+                arToolkitSource = new THREEx.ArToolkitSource({
+                    sourceType: 'webcam',
+                    sourceWidth: window.innerWidth,
+                    sourceHeight: window.innerHeight,
+                    displayWidth: window.innerWidth,
+                    displayHeight: window.innerHeight
+                });
                 
                 // Initialize AR context
-                arToolkitContext.init(() => {
-                    camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
-                    isInitialized = true;
-                    document.getElementById('loading').style.display = 'none';
+                arToolkitContext = new THREEx.ArToolkitContext({
+                    cameraParametersUrl: 'https://ar-js-org.github.io/AR.js/data/data/camera_para.dat',
+                    detectionMode: 'mono',
+                    maxDetectionRate: 60,
+                    canvasWidth: window.innerWidth,
+                    canvasHeight: window.innerHeight,
+                    debug: false
                 });
-            });
+                
+                // Handle source initialization
+                arToolkitSource.init(() => {
+                    arToolkitSource.onResizeElement();
+                    arToolkitSource.copyElementSizeTo(renderer.domElement);
+                    
+                    // Start camera stream
+                    startCamera();
+                    
+                    // Initialize AR context
+                    arToolkitContext.init(() => {
+                        camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+                        isInitialized = true;
+                        document.getElementById('loading').style.display = 'none';
+                    });
+                });
+            } catch (error) {
+                console.error('AR.js initialization error:', error);
+                document.getElementById('loading').textContent = 
+                    "Error: AR initialization failed. Please refresh the page.";
+            }
         }
 
         function startCamera() {
@@ -195,6 +221,8 @@
             })
             .then(stream => {
                 const video = document.createElement('video');
+                video.setAttribute('autoplay', '');
+                video.setAttribute('playsinline', '');
                 video.srcObject = stream;
                 video.onloadedmetadata = () => {
                     video.play();
@@ -205,7 +233,7 @@
             .catch(err => {
                 console.error("Camera error:", err);
                 document.getElementById('loading').textContent = 
-                    "Could not access camera. Please ensure you've granted camera permissions and try again.";
+                    "Could not access camera. Please ensure you've granted camera permissions.";
             });
         }
 
@@ -228,12 +256,10 @@
         function onTap(event) {
             if (!reticle.visible || !isInitialized) return;
             
-            // Create a 3D object at the reticle position
             createObjectAtPosition(reticle.position, reticle.quaternion);
         }
 
         function createObjectAtPosition(position, quaternion) {
-            // Create a more interesting object than just a cube
             const geometry = new THREE.ConeGeometry(0.05, 0.1, 32);
             const material = new THREE.MeshStandardMaterial({ 
                 color: new THREE.Color().setHSL(Math.random(), 0.7, 0.5),
@@ -245,7 +271,6 @@
             object.position.copy(position);
             object.quaternion.copy(quaternion);
             
-            // Add some animation properties
             object.userData = {
                 scale: 1,
                 pulseDirection: 1,
@@ -255,7 +280,6 @@
             scene.add(object);
             placedObjects.push(object);
             
-            // Limit the number of placed objects
             if (placedObjects.length > 10) {
                 const oldObject = placedObjects.shift();
                 scene.remove(oldObject);
@@ -267,25 +291,16 @@
             
             if (!isInitialized) return;
             
-            // Update AR tracking
             updateARTracking();
-            
-            // Update placed objects
             updatePlacedObjects();
-            
-            // Render scene
             renderer.render(scene, camera);
         }
 
         function updateARTracking() {
             if (arToolkitContext.ready) {
-                // Update projection matrix
                 camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
                 
-                // Simulate SLAM-like surface detection
-                // In a real implementation, this would use actual tracking data
                 if (Math.random() > 0.97) {
-                    // Perform "hit test" by checking if the position is on our invisible plane
                     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
                     const intersects = raycaster.intersectObject(hitTestPlane);
                     
@@ -300,18 +315,12 @@
         }
 
         function updatePlacedObjects() {
-            // Animate placed objects
             placedObjects.forEach(obj => {
-                // Pulsing animation
                 obj.userData.scale += 0.01 * obj.userData.pulseDirection;
                 if (obj.userData.scale > 1.2 || obj.userData.scale < 0.8) {
                     obj.userData.pulseDirection *= -1;
                 }
-                
-                // Apply scale
                 obj.scale.setScalar(obj.userData.scale);
-                
-                // Rotation
                 obj.rotation.y += obj.userData.rotationSpeed;
             });
         }
