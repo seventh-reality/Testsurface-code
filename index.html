@@ -1,329 +1,250 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="utf-8">
-    <title>SLAM-based Web AR</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>AlvaAR SLAM Surface Tracking with GLB Model</title>
     <style>
-        body { margin: 0; overflow: hidden; }
-        canvas { display: block; width: 100%; height: 100%; }
-        #info {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: white;
-            background: rgba(0,0,0,0.5);
-            padding: 10px;
-            border-radius: 5px;
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
             font-family: Arial, sans-serif;
+        }
+        #ar-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
         }
         #loading {
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.7);
             color: white;
-            background: rgba(0,0,0,0.7);
             padding: 20px;
-            border-radius: 5px;
-            font-family: Arial, sans-serif;
+            border-radius: 10px;
             text-align: center;
         }
+        #instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            color: white;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            margin: 0 auto;
+            width: 80%;
+            border-radius: 5px;
+        }
     </style>
+    <!-- Include AlvaAR WebAR library -->
+    <script src="https://cdn.alva-ar.com/latest/alvaar.js"></script>
+    <!-- Include Three.js for GLB model rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- GLTFLoader for loading GLB models -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.min.js"></script>
 </head>
 <body>
-    <div id="info">Move your device to detect surfaces. Tap to place object.</div>
-    <div id="loading">Initializing AR, please wait...</div>
-    
-    <!-- Load Three.js first -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    
-    <!-- Load AR.js with a fallback -->
+    <div id="ar-container"></div>
+    <div id="loading">Initializing AR experience...</div>
+    <div id="instructions" style="display: none;">Move your device to detect surfaces. Tap to place the object.</div>
+
     <script>
-        // Function to load AR.js with error handling
-        function loadARJS() {
-            return new Promise((resolve, reject) => {
-                const script = document.createElement('script');
-                script.src = 'https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.2.0/dist/ar.js';
-                script.onload = () => {
-                    if (typeof THREEx !== 'undefined') {
-                        resolve();
-                    } else {
-                        reject(new Error('AR.js loaded but THREEx not defined'));
-                    }
-                };
-                script.onerror = () => reject(new Error('Failed to load AR.js'));
-                document.head.appendChild(script);
-            });
+        // Configuration
+        const config = {
+            containerId: 'ar-container',
+            modelUrl: 'all.glb', // Replace with your GLB model URL
+            modelScale: 0.5, // Adjust scale as needed
+            modelPlacementHeight: 0 // Height above the detected surface
+        };
+
+        // Variables
+        let alvaAR = null;
+        let threeScene = null;
+        let threeCamera = null;
+        let threeRenderer = null;
+        let model = null;
+        let placed = false;
+        let tapPosition = new THREE.Vector2();
+
+        // Initialize the AR experience
+        async function init() {
+            try {
+                // Initialize AlvaAR
+                alvaAR = new AlvaAR.AlvaAR({
+                    container: document.getElementById(config.containerId),
+                    trackingMode: AlvaAR.TrackingMode.SLAM,
+                    surfaceTracking: true
+                });
+
+                // Wait for initialization
+                await alvaAR.init();
+
+                // Initialize Three.js scene
+                initThreeJS();
+
+                // Load the GLB model
+                await loadModel();
+
+                // Hide loading message and show instructions
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('instructions').style.display = 'block';
+
+                // Start the AR experience
+                startAR();
+
+            } catch (error) {
+                console.error('Initialization error:', error);
+                document.getElementById('loading').textContent = 'Error initializing AR. Please try again.';
+            }
         }
 
-        // Main initialization
-        loadARJS()
-            .then(() => {
-                // AR.js loaded successfully, initialize the app
-                init();
-            })
-            .catch(error => {
-                console.error('AR.js loading error:', error);
-                document.getElementById('loading').textContent = 
-                    "Error: Could not load AR components. Please check your internet connection and refresh the page.";
-            });
-    </script>
-    
-    <script>
-        // Global variables
-        let scene, camera, renderer;
-        let arToolkitSource, arToolkitContext;
-        let reticle, placedObjects = [];
-        let hitTestPlane, raycaster;
-        let isInitialized = false;
-
-        function init() {
-            // Initialize Three.js
-            initThreeJS();
-            
-            // Initialize AR.js
-            initARJS();
-            
-            // Set up event listeners
-            setupEventListeners();
-            
-            // Start animation loop
-            animate();
-        }
-
+        // Initialize Three.js scene
         function initThreeJS() {
-            // Create scene
-            scene = new THREE.Scene();
+            // Create Three.js scene
+            threeScene = new THREE.Scene();
             
-            // Create camera
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            // Create Three.js camera (will be updated each frame to match AR camera)
+            threeCamera = new THREE.PerspectiveCamera();
+            threeScene.add(threeCamera);
             
-            // Create renderer
-            renderer = new THREE.WebGLRenderer({ 
-                antialias: true, 
+            // Create Three.js renderer
+            threeRenderer = new THREE.WebGLRenderer({
                 alpha: true,
-                precision: 'highp'
+                antialias: true
             });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.outputEncoding = THREE.sRGBEncoding;
-            document.body.appendChild(renderer.domElement);
+            threeRenderer.setPixelRatio(window.devicePixelRatio);
+            threeRenderer.setSize(window.innerWidth, window.innerHeight);
+            threeRenderer.autoClear = false;
             
-            // Add lighting
-            const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
-            scene.add(ambientLight);
+            // Add renderer to DOM
+            document.getElementById(config.containerId).appendChild(threeRenderer.domElement);
+            
+            // Add lights to the scene
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            threeScene.add(ambientLight);
             
             const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
             directionalLight.position.set(1, 1, 1);
-            scene.add(directionalLight);
-            
-            // Create reticle for surface placement
-            createReticle();
-            
-            // Create hit test plane (invisible plane for raycasting)
-            hitTestPlane = new THREE.Mesh(
-                new THREE.PlaneGeometry(100, 100),
-                new THREE.MeshBasicMaterial({ visible: false })
-            );
-            hitTestPlane.rotation.x = -Math.PI / 2;
-            scene.add(hitTestPlane);
-            
-            // Create raycaster for hit testing
-            raycaster = new THREE.Raycaster();
+            threeScene.add(directionalLight);
         }
 
-        function createReticle() {
-            const ringGeometry = new THREE.RingGeometry(0.1, 0.15, 32);
-            const dotGeometry = new THREE.CircleGeometry(0.03, 32);
-            
-            const ringMaterial = new THREE.MeshBasicMaterial({
-                color: 0xffffff,
-                transparent: true,
-                opacity: 0.8,
-                side: THREE.DoubleSide
-            });
-            
-            const dotMaterial = new THREE.MeshBasicMaterial({
-                color: 0x00ff00,
-                transparent: true,
-                opacity: 0.8
-            });
-            
-            const reticleGroup = new THREE.Group();
-            const ring = new THREE.Mesh(ringGeometry, ringMaterial);
-            const dot = new THREE.Mesh(dotGeometry, dotMaterial);
-            
-            ring.rotation.x = -Math.PI / 2;
-            dot.rotation.x = -Math.PI / 2;
-            dot.position.y = 0.001;
-            
-            reticleGroup.add(ring);
-            reticleGroup.add(dot);
-            reticleGroup.visible = false;
-            
-            scene.add(reticleGroup);
-            reticle = reticleGroup;
-        }
-
-        function initARJS() {
-            try {
-                // Create AR source (webcam)
-                arToolkitSource = new THREEx.ArToolkitSource({
-                    sourceType: 'webcam',
-                    sourceWidth: window.innerWidth,
-                    sourceHeight: window.innerHeight,
-                    displayWidth: window.innerWidth,
-                    displayHeight: window.innerHeight
-                });
+        // Load the GLB model
+        async function loadModel() {
+            return new Promise((resolve, reject) => {
+                const loader = new THREE.GLTFLoader();
                 
-                // Initialize AR context
-                arToolkitContext = new THREEx.ArToolkitContext({
-                    cameraParametersUrl: 'https://ar-js-org.github.io/AR.js/data/data/camera_para.dat',
-                    detectionMode: 'mono',
-                    maxDetectionRate: 60,
-                    canvasWidth: window.innerWidth,
-                    canvasHeight: window.innerHeight,
-                    debug: false
-                });
-                
-                // Handle source initialization
-                arToolkitSource.init(() => {
-                    arToolkitSource.onResizeElement();
-                    arToolkitSource.copyElementSizeTo(renderer.domElement);
-                    
-                    // Start camera stream
-                    startCamera();
-                    
-                    // Initialize AR context
-                    arToolkitContext.init(() => {
-                        camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
-                        isInitialized = true;
-                        document.getElementById('loading').style.display = 'none';
-                    });
-                });
-            } catch (error) {
-                console.error('AR.js initialization error:', error);
-                document.getElementById('loading').textContent = 
-                    "Error: AR initialization failed. Please refresh the page.";
-            }
-        }
-
-        function startCamera() {
-            navigator.mediaDevices.getUserMedia({ 
-                video: { 
-                    facingMode: 'environment',
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 }
-                } 
-            })
-            .then(stream => {
-                const video = document.createElement('video');
-                video.setAttribute('autoplay', '');
-                video.setAttribute('playsinline', '');
-                video.srcObject = stream;
-                video.onloadedmetadata = () => {
-                    video.play();
-                    // Assign to AR.js source
-                    arToolkitSource.domElement = video;
-                };
-            })
-            .catch(err => {
-                console.error("Camera error:", err);
-                document.getElementById('loading').textContent = 
-                    "Could not access camera. Please ensure you've granted camera permissions.";
-            });
-        }
-
-        function setupEventListeners() {
-            window.addEventListener('resize', onWindowResize);
-            window.addEventListener('click', onTap);
-        }
-
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            
-            if (arToolkitSource) {
-                arToolkitSource.onResizeElement();
-                arToolkitSource.copyElementSizeTo(renderer.domElement);
-            }
-        }
-
-        function onTap(event) {
-            if (!reticle.visible || !isInitialized) return;
-            
-            createObjectAtPosition(reticle.position, reticle.quaternion);
-        }
-
-        function createObjectAtPosition(position, quaternion) {
-            const geometry = new THREE.ConeGeometry(0.05, 0.1, 32);
-            const material = new THREE.MeshStandardMaterial({ 
-                color: new THREE.Color().setHSL(Math.random(), 0.7, 0.5),
-                roughness: 0.2,
-                metalness: 0.3
-            });
-            
-            const object = new THREE.Mesh(geometry, material);
-            object.position.copy(position);
-            object.quaternion.copy(quaternion);
-            
-            object.userData = {
-                scale: 1,
-                pulseDirection: 1,
-                rotationSpeed: Math.random() * 0.02 - 0.01
-            };
-            
-            scene.add(object);
-            placedObjects.push(object);
-            
-            if (placedObjects.length > 10) {
-                const oldObject = placedObjects.shift();
-                scene.remove(oldObject);
-            }
-        }
-
-        function animate() {
-            requestAnimationFrame(animate);
-            
-            if (!isInitialized) return;
-            
-            updateARTracking();
-            updatePlacedObjects();
-            renderer.render(scene, camera);
-        }
-
-        function updateARTracking() {
-            if (arToolkitContext.ready) {
-                camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
-                
-                if (Math.random() > 0.97) {
-                    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-                    const intersects = raycaster.intersectObject(hitTestPlane);
-                    
-                    if (intersects.length > 0) {
-                        const point = intersects[0].point;
-                        reticle.position.copy(point);
-                        reticle.quaternion.copy(camera.quaternion);
-                        reticle.visible = true;
+                loader.load(
+                    config.modelUrl,
+                    (gltf) => {
+                        model = gltf.scene;
+                        model.scale.set(config.modelScale, config.modelScale, config.modelScale);
+                        model.visible = false; // Hide until placed
+                        threeScene.add(model);
+                        resolve();
+                    },
+                    undefined,
+                    (error) => {
+                        console.error('Error loading model:', error);
+                        reject(error);
                     }
-                }
-            }
-        }
-
-        function updatePlacedObjects() {
-            placedObjects.forEach(obj => {
-                obj.userData.scale += 0.01 * obj.userData.pulseDirection;
-                if (obj.userData.scale > 1.2 || obj.userData.scale < 0.8) {
-                    obj.userData.pulseDirection *= -1;
-                }
-                obj.scale.setScalar(obj.userData.scale);
-                obj.rotation.y += obj.userData.rotationSpeed;
+                );
             });
         }
+
+        // Start the AR experience
+        function startAR() {
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize);
+            
+            // Handle touch events for model placement
+            window.addEventListener('touchstart', onTouchStart, false);
+            window.addEventListener('click', onClick, false);
+            
+            // Start the AR render loop
+            alvaAR.run(renderLoop);
+        }
+
+        // AR render loop
+        function renderLoop(poseMatrix, projectionMatrix) {
+            if (!poseMatrix || !projectionMatrix) return;
+            
+            // Update Three.js camera with AR camera pose
+            threeCamera.matrix.fromArray(poseMatrix);
+            threeCamera.matrix.decompose(threeCamera.position, threeCamera.quaternion, threeCamera.scale);
+            threeCamera.projectionMatrix.fromArray(projectionMatrix);
+            threeCamera.updateMatrixWorld(true);
+            
+            // If model is placed, keep it at its position
+            if (placed && model) {
+                // You could add animation or interaction logic here
+            }
+            
+            // Render Three.js scene
+            threeRenderer.clear();
+            threeRenderer.render(threeScene, threeCamera);
+            
+            // Request next frame
+            requestAnimationFrame(() => alvaAR.run(renderLoop));
+        }
+
+        // Handle touch/click for model placement
+        function onTouchStart(event) {
+            if (placed) return;
+            
+            // Get touch position
+            tapPosition.x = (event.touches[0].clientX / window.innerWidth) * 2 - 1;
+            tapPosition.y = -(event.touches[0].clientY / window.innerHeight) * 2 + 1;
+            
+            placeModel();
+        }
+
+        function onClick(event) {
+            if (placed) return;
+            
+            // Get click position
+            tapPosition.x = (event.clientX / window.innerWidth) * 2 - 1;
+            tapPosition.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            placeModel();
+        }
+
+        // Place the model on a detected surface
+        function placeModel() {
+            if (!model || placed) return;
+            
+            // Raycast to find surface
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(tapPosition, threeCamera);
+            
+            // In a real implementation, you would use AlvaAR's surface detection
+            // For this example, we'll place the model in front of the camera
+            const distance = 1.0; // Distance from camera
+            const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(threeCamera.quaternion);
+            
+            model.position.copy(threeCamera.position).add(direction.multiplyScalar(distance));
+            model.position.y += config.modelPlacementHeight; // Adjust height
+            
+            // Make model face the camera
+            model.quaternion.copy(threeCamera.quaternion);
+            
+            model.visible = true;
+            placed = true;
+            
+            document.getElementById('instructions').textContent = 'Model placed! Move around to view it.';
+        }
+
+        // Handle window resize
+        function onWindowResize() {
+            threeRenderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Start the application
+        window.addEventListener('load', init);
     </script>
 </body>
 </html>
