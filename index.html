@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>8th Wall Surface Tracking</title>
   <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe.min.js"></script>
   <script src="//cdn.8thwall.com/web/aframe/aframe-master.js"></script>
@@ -14,6 +14,8 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
     }
     #ar-overlay {
       position: absolute;
@@ -22,9 +24,10 @@
       right: 0;
       text-align: center;
       color: white;
-      font-family: Arial, sans-serif;
+      font-family: -apple-system, Arial, sans-serif;
       text-shadow: 1px 1px 2px black;
       z-index: 1000;
+      pointer-events: none;
     }
     #loading {
       position: absolute;
@@ -37,17 +40,31 @@
       justify-content: center;
       align-items: center;
       color: white;
-      font-family: Arial, sans-serif;
+      font-family: -apple-system, Arial, sans-serif;
       z-index: 1001;
+      flex-direction: column;
+    }
+    #permission-button {
+      margin-top: 20px;
+      padding: 12px 24px;
+      background: #007AFF;
+      color: white;
+      border: none;
+      border-radius: 20px;
+      font-size: 16px;
+      cursor: pointer;
     }
   </style>
 </head>
 <body>
-  <div id="loading">Initializing AR...</div>
+  <div id="loading">
+    <div>Initializing AR...</div>
+    <button id="permission-button" style="display:none">Allow Camera Access</button>
+  </div>
   <div id="ar-overlay">Tap on detected surfaces to place objects</div>
 
   <a-scene 
-    xrweb="disableWorldTracking: false"
+    xrweb="disableWorldTracking: false; requiredPermissions: camera"
     xrextras-almost-there
     xrextras-runtime-error
     xrextras-loading
@@ -70,6 +87,100 @@
     <a-entity id="model-template" gltf-model="https://cdn.8thwall.com/web/assets/box/box.glb" scale="0.2 0.2 0.2" visible="false"></a-entity>
   </a-scene>
 
-  <script src="app.js"></script>
+  <script>
+    // Enhanced iOS initialization
+    document.addEventListener('DOMContentLoaded', () => {
+      const loadingScreen = document.getElementById('loading');
+      const permissionButton = document.getElementById('permission-button');
+      const scene = document.querySelector('a-scene');
+      
+      // iOS-specific checks
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      
+      // Handle scene loaded event
+      scene.addEventListener('loaded', () => {
+        // Check if we're on iOS and camera isn't working
+        if (isIOS && !scene.is('ar-mode')) {
+          permissionButton.style.display = 'block';
+          loadingScreen.querySelector('div').textContent = 'Camera access is required for AR';
+        } else {
+          setTimeout(() => {
+            loadingScreen.style.display = 'none';
+          }, 1000);
+        }
+      });
+      
+      // Handle permission button click
+      permissionButton.addEventListener('click', () => {
+        // Trigger camera permission request
+        navigator.mediaDevices.getUserMedia({ video: true })
+          .then(() => {
+            window.location.reload();
+          })
+          .catch(err => {
+            console.error('Camera permission denied:', err);
+            loadingScreen.querySelector('div').textContent = 'Please enable camera access in Settings';
+          });
+      });
+      
+      // iOS-specific timeout for AR initialization
+      if (isIOS) {
+        setTimeout(() => {
+          if (loadingScreen.style.display !== 'none') {
+            permissionButton.style.display = 'block';
+            loadingScreen.querySelector('div').textContent = 'Having trouble starting AR?';
+          }
+        }, 8000);
+      }
+      
+      // Initialize surface placement
+      initSurfacePlacement();
+    });
+    
+    function initSurfacePlacement() {
+      const scene = document.querySelector('a-scene');
+      const modelTemplate = document.getElementById('model-template');
+      let modelCount = 0;
+      
+      // Handle tap events to place models
+      scene.addEventListener('click', (evt) => {
+        if (!evt.detail.intersection) return;
+        
+        const position = evt.detail.intersection.point;
+        const newModel = modelTemplate.cloneNode(true);
+        newModel.id = `model-${modelCount++}`;
+        newModel.object3D.position.copy(position);
+        newModel.setAttribute('visible', 'true');
+        
+        // Align the model with the surface normal
+        const normal = evt.detail.intersection.face.normal;
+        newModel.object3D.lookAt(
+          position.x + normal.x,
+          position.y + normal.y,
+          position.z + normal.z
+        );
+        
+        // Add animation for better UX
+        newModel.setAttribute('animation', {
+          property: 'scale',
+          from: '0.01 0.01 0.01',
+          to: '0.2 0.2 0.2',
+          dur: 300,
+          easing: 'easeOutElastic'
+        });
+        
+        scene.appendChild(newModel);
+      });
+      
+      // Surface detection events
+      const surfaceVisualizer = document.querySelector('[xrextras-surface-visualizer]');
+      if (surfaceVisualizer) {
+        surfaceVisualizer.addEventListener('surfacefound', () => {
+          console.log('Surface detected!');
+        });
+      }
+    }
+  </script>
 </body>
 </html>
