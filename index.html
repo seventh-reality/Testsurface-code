@@ -7,37 +7,54 @@
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/aframe-extras@6.1.1/dist/aframe-extras.min.js"></script>
     <style>
-    .a-enter-ar-button,
-    .a-enter-vr-button {
-      position: fixed !important;
-      left: 50% !important;
-      transform: translateX(-50%) !important;
-      bottom: 30px !important;
-      z-index: 9999 !important;
-      background-color: #007bff !important;
-      color: white !important;
-      padding: 12px 20px !important;
-      font-size: 16px !important;
-      border-radius: 10px !important;
-      border: none !important;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-    }
-
-    .a-enter-ar-button:hover,
-    .a-enter-vr-button:hover {
-      background-color: #0056b3 !important;
-    }
-
-    @media (max-width: 600px) {
       .a-enter-ar-button,
       .a-enter-vr-button {
-        font-size: 14px !important;
-        padding: 10px 16px !important;
+        position: fixed !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        bottom: 30px !important;
+        z-index: 9999 !important;
+        background-color: #007bff !important;
+        color: white !important;
+        padding: 12px 20px !important;
+        font-size: 16px !important;
+        border-radius: 10px !important;
+        border: none !important;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
       }
-    }
-  </style>
+
+      .a-enter-ar-button:hover,
+      .a-enter-vr-button:hover {
+        background-color: #0056b3 !important;
+      }
+
+      @media (max-width: 600px) {
+        .a-enter-ar-button,
+        .a-enter-vr-button {
+          font-size: 14px !important;
+          padding: 10px 16px !important;
+        }
+      }
+
+      #compatibility-warning {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        padding: 15px;
+        background-color: #ff3b30;
+        color: white;
+        text-align: center;
+        z-index: 10000;
+        display: none;
+      }
+    </style>
   </head>
   <body>
+    <div id="compatibility-warning">
+      Your device or browser doesn't support AR features. Please try on a newer iOS device (iOS 11+) or Android device.
+    </div>
+
     <a-scene
       xr-mode-ui="enabled: true"
       webxr="optionalFeatures: hit-test; requiredFeatures: local-floor"
@@ -66,45 +83,73 @@
     </a-scene>
 
     <script>
-      AFRAME.registerComponent('ar-hit-test', {
-        init: function () {
-          const sceneEl = this.el;
-          const reticle = document.querySelector('#reticle');
-          const object = document.querySelector('#object');
+      // Check for WebXR support
+      function checkWebXRSupport() {
+        if (!navigator.xr) {
+          document.getElementById('compatibility-warning').style.display = 'block';
+          return false;
+        }
+        
+        // iOS 7 doesn't support WebXR at all
+        const isOldIOS = /iP(hone|od|ad).*OS 7_/.test(navigator.userAgent);
+        if (isOldIOS) {
+          document.getElementById('compatibility-warning').style.display = 'block';
+          return false;
+        }
+        
+        return true;
+      }
 
-          this.el.sceneEl.renderer.xr.addEventListener('sessionstart', () => {
-            const session = this.el.sceneEl.renderer.xr.getSession();
-            const viewerSpace = this.el.sceneEl.renderer.xr.getReferenceSpace();
-            session.requestReferenceSpace('viewer').then((refSpace) => {
-              session.requestHitTestSource({ space: refSpace }).then((source) => {
-                sceneEl.frame = (time, frame) => {
-                  if (frame) {
-                    const viewerPose = frame.getViewerPose(viewerSpace);
-                    if (viewerPose) {
-                      const hitTestResults = frame.getHitTestResults(source);
-                      if (hitTestResults.length > 0) {
-                        const hit = hitTestResults[0];
-                        const pose = hit.getPose(viewerSpace);
-                        reticle.object3D.visible = true;
-                        reticle.object3D.position.copy(pose.transform.position);
-                        reticle.object3D.quaternion.copy(pose.transform.orientation);
+      // Only register AR components if supported
+      if (checkWebXRSupport()) {
+        AFRAME.registerComponent('ar-hit-test', {
+          init: function () {
+            const sceneEl = this.el;
+            const reticle = document.querySelector('#reticle');
+            const object = document.querySelector('#object');
+
+            this.el.sceneEl.renderer.xr.addEventListener('sessionstart', () => {
+              const session = this.el.sceneEl.renderer.xr.getSession();
+              const viewerSpace = this.el.sceneEl.renderer.xr.getReferenceSpace();
+              session.requestReferenceSpace('viewer').then((refSpace) => {
+                session.requestHitTestSource({ space: refSpace }).then((source) => {
+                  sceneEl.frame = (time, frame) => {
+                    if (frame) {
+                      const viewerPose = frame.getViewerPose(viewerSpace);
+                      if (viewerPose) {
+                        const hitTestResults = frame.getHitTestResults(source);
+                        if (hitTestResults.length > 0) {
+                          const hit = hitTestResults[0];
+                          const pose = hit.getPose(viewerSpace);
+                          reticle.object3D.visible = true;
+                          reticle.object3D.position.copy(pose.transform.position);
+                          reticle.object3D.quaternion.copy(pose.transform.orientation);
+                        }
                       }
                     }
-                  }
-                };
+                  };
+                });
               });
             });
-          });
 
-          this.el.sceneEl.addEventListener('click', () => {
-            if (reticle.object3D.visible) {
-              object.setAttribute('visible', 'true');
-              object.object3D.position.copy(reticle.object3D.position);
-              object.object3D.quaternion.copy(reticle.object3D.quaternion);
-            }
-          });
-        }
-      });
+            this.el.sceneEl.addEventListener('click', () => {
+              if (reticle.object3D.visible) {
+                object.setAttribute('visible', 'true');
+                object.object3D.position.copy(reticle.object3D.position);
+                object.object3D.quaternion.copy(reticle.object3D.quaternion);
+              }
+            });
+          }
+        });
+      } else {
+        // Hide AR button if not supported
+        document.addEventListener('DOMContentLoaded', () => {
+          const arButton = document.querySelector('.a-enter-ar-button');
+          if (arButton) {
+            arButton.style.display = 'none';
+          }
+        });
+      }
     </script>
   </body>
 </html>
