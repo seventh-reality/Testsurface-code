@@ -99,6 +99,19 @@
       z-index: 20;
       display: none;
     }
+    #camera-error {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+      z-index: 200;
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -117,6 +130,10 @@
 
   <div id="info">Move device to detect surfaces. Tap to place objects.</div>
   <div id="surface-indicator"></div>
+  <div id="camera-error">
+    <p>Camera access was denied. Please enable camera permissions and refresh.</p>
+    <button id="retry-button">Retry</button>
+  </div>
   
   <div id="ar-container"></div>
 
@@ -136,6 +153,7 @@
     let model = null;
     let reticle = null;
     let arjsScene = null;
+    let tween = null;
 
     // Check for WebXR support
     async function checkXRSupport() {
@@ -154,12 +172,32 @@
       }
     }
 
+    // Check camera permissions
+    async function checkCameraPermissions() {
+      try {
+        // Try to access camera
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(track => track.stop());
+        return true;
+      } catch (e) {
+        console.error("Camera permission denied:", e);
+        return false;
+      }
+    }
+
     // Initialize WebXR mode with enhanced surface detection
     async function initWebXR() {
       currentMode = 'webxr';
       document.getElementById('mode-selector').style.display = 'none';
       
       try {
+        // Check camera permissions first
+        const hasPermission = await checkCameraPermissions();
+        if (!hasPermission) {
+          showCameraError();
+          return;
+        }
+
         // Create Three.js scene
         scene = new THREE.Scene();
         
@@ -252,12 +290,19 @@
     }
 
     // Initialize AR.js fallback mode with surface detection
-    function initARJS() {
+    async function initARJS() {
       currentMode = 'arjs';
       document.getElementById('mode-selector').style.display = 'none';
       document.getElementById('surface-indicator').style.display = 'block';
       
       try {
+        // Check camera permissions first
+        const hasPermission = await checkCameraPermissions();
+        if (!hasPermission) {
+          showCameraError();
+          return;
+        }
+
         document.getElementById('ar-container').innerHTML = `
           <a-scene 
             vr-mode-ui="enabled: false"
@@ -306,6 +351,15 @@
         document.getElementById('support-message').innerHTML = 
           '<p class="unsupported">Failed to initialize AR</p>';
       }
+    }
+
+    // Show camera error message
+    function showCameraError() {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('camera-error').style.display = 'block';
+      document.getElementById('retry-button').addEventListener('click', () => {
+        window.location.reload();
+      });
     }
 
     // Place model in AR.js mode
@@ -394,6 +448,11 @@
       }
       
       renderer.render(scene, camera);
+      
+      // Update TWEEN animations if available
+      if (window.TWEEN) {
+        TWEEN.update();
+      }
     }
 
     // Update surface indicator in WebXR mode
@@ -425,11 +484,15 @@
         newModel.scale.set(0.01, 0.01, 0.01);
         scene.add(newModel);
         
-        // Animate the model
-        new TWEEN.Tween(newModel.scale)
-          .to({ x: 0.3, y: 0.3, z: 0.3 }, 500)
-          .easing(TWEEN.Easing.Elastic.Out)
-          .start();
+        // Animate the model if TWEEN is available
+        if (window.TWEEN) {
+          new TWEEN.Tween(newModel.scale)
+            .to({ x: 0.3, y: 0.3, z: 0.3 }, 500)
+            .easing(TWEEN.Easing.Elastic.Out)
+            .start();
+        } else {
+          newModel.scale.set(0.3, 0.3, 0.3);
+        }
       }
     }
 
@@ -448,7 +511,10 @@
     document.getElementById('start-button').addEventListener('click', async () => {
       const supported = await checkXRSupport();
       
-      if (supported && config.useWebXR) {
+      // Always show mode selector on Android
+      const isAndroid = /Android/.test(navigator.userAgent);
+      
+      if ((supported && config.useWebXR) || isAndroid) {
         if (config.useARJS) {
           document.getElementById('mode-selector').style.display = 'block';
           document.getElementById('webxr-btn').addEventListener('click', initWebXR);
@@ -478,7 +544,10 @@
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
       const isAndroid = /Android/.test(navigator.userAgent);
       
-      if ((isIOS && !window.IOS_WEBXR_AVAILABLE) || (isAndroid && !navigator.xr)) {
+      if (isAndroid) {
+        document.getElementById('support-message').innerHTML = 
+          '<p>Android device detected. Please select AR mode.</p>';
+      } else if (isIOS && !window.IOS_WEBXR_AVAILABLE) {
         document.getElementById('support-message').innerHTML = 
           '<p>Using compatibility mode for this device</p>';
       }
