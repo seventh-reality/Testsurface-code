@@ -1,264 +1,80 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <title>8th Wall Surface Tracking</title>
-  <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe.min.js"></script>
-  <script src="//cdn.8thwall.com/web/aframe/aframe-master.js"></script>
-  <script src="//cdn.8thwall.com/web/xrextras/xrextras.js"></script>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      -webkit-touch-callout: none;
-      -webkit-user-select: none;
-    }
-    #ar-overlay {
-      position: absolute;
-      bottom: 20px;
-      left: 0;
-      right: 0;
-      text-align: center;
-      color: white;
-      font-family: -apple-system, Arial, sans-serif;
-      text-shadow: 1px 1px 2px black;
-      z-index: 1000;
-      pointer-events: none;
-    }
-    #loading {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0,0,0,0.8);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      color: white;
-      font-family: -apple-system, Arial, sans-serif;
-      z-index: 1001;
-      flex-direction: column;
-    }
-    #permission-button {
-      margin-top: 20px;
-      padding: 12px 24px;
-      background: #007AFF;
-      color: white;
-      border: none;
-      border-radius: 20px;
-      font-size: 16px;
-      cursor: pointer;
-    }
-    #retry-button {
-      margin-top: 10px;
-      padding: 10px 20px;
-      background: #FF9500;
-      color: white;
-      border: none;
-      border-radius: 20px;
-      font-size: 14px;
-      cursor: pointer;
-      display: none;
-    }
-    #ios-help {
-      margin-top: 20px;
-      padding: 15px;
-      background: rgba(255,255,255,0.1);
-      border-radius: 10px;
-      max-width: 80%;
-      display: none;
-    }
-    #ios-help ul {
-      text-align: left;
-      padding-left: 20px;
-    }
-    #ios-help li {
-      margin-bottom: 8px;
-    }
-  </style>
-</head>
-<body>
-  <div id="loading">
-    <div id="loading-message">Initializing AR...</div>
-    <button id="permission-button" style="display:none">Allow Camera Access</button>
-    <button id="retry-button">Retry AR Session</button>
-    <div id="ios-help">
-      <h3>iOS Troubleshooting:</h3>
-      <ul>
-        <li>Make sure camera access is allowed in Settings > Safari</li>
-        <li>Close other apps using the camera</li>
-        <li>Try restarting your device</li>
-        <li>Ensure you're using iOS 14+</li>
-        <li>Try in a different lighting environment</li>
-      </ul>
-    </div>
-  </div>
-  <div id="ar-overlay">Tap on detected surfaces to place objects</div>
+  <head>
+    <meta charset="utf-8" />
+    <title>WebXR Hit Test AR</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/aframe-extras@6.1.1/dist/aframe-extras.min.js"></script>
+  </head>
+  <body>
+    <a-scene
+      xr-mode-ui="enabled: true"
+      webxr="optionalFeatures: hit-test; requiredFeatures: local-floor"
+      ar-hit-test
+      embedded
+      renderer="colorManagement: true; physicallyCorrectLights: true"
+    >
+      <a-light type="ambient" intensity="0.5"></a-light>
+      <a-light type="directional" position="0 10 0" intensity="1"></a-light>
 
-  <a-scene 
-    xrweb="disableWorldTracking: false; requiredPermissions: camera"
-    xrextras-almost-there
-    xrextras-runtime-error
-    xrextras-loading
-    renderer="colorManagement: true;"
-    background="color: #FAFAFA"
-    xrextras-gesture-detector
-    xrextras-surface-placement>
+      <!-- Reticle for surface detection -->
+      <a-entity id="reticle" visible="false"
+        geometry="primitive: ring; radiusInner: 0.05; radiusOuter: 0.06"
+        material="color: green; shader: flat"
+        position="0 0 -1"
+        rotation="-90 0 0">
+      </a-entity>
 
-    <!-- Camera setup -->
-    <a-entity camera></a-entity>
-    
-    <!-- Lighting -->
-    <a-entity light="type: ambient; color: #FFF; intensity: 0.5"></a-entity>
-    <a-entity light="type: directional; color: #FFF; intensity: 0.5" position="-1 1 1"></a-entity>
-    
-    <!-- Surface visualization (optional) -->
-    <a-entity xrextras-surface-visualizer></a-entity>
-    
-    <!-- Example 3D model to place (can be replaced with your own) -->
-    <a-entity id="model-template" gltf-model="https://cdn.8thwall.com/web/assets/box/box.glb" scale="0.2 0.2 0.2" visible="false"></a-entity>
-  </a-scene>
+      <!-- Example object -->
+      <a-entity id="object" gltf-model="https://cdn.8thwall.com/web/assets/box/box.glb"
+                scale="0.2 0.2 0.2"
+                visible="false">
+      </a-entity>
 
-  <script>
-  document.addEventListener('DOMContentLoaded', () => {
-    const loadingScreen = document.getElementById('loading');
-    const loadingMessage = document.getElementById('loading-message');
-    const permissionButton = document.getElementById('permission-button');
-    const retryButton = document.getElementById('retry-button');
-    const iosHelp = document.getElementById('ios-help');
-    const scene = document.querySelector('a-scene');
+      <a-camera></a-camera>
+    </a-scene>
 
-    const isIOS = () => {
-      return /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-             (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    };
+    <script>
+      AFRAME.registerComponent('ar-hit-test', {
+        init: function () {
+          const sceneEl = this.el;
+          const reticle = document.querySelector('#reticle');
+          const object = document.querySelector('#object');
 
-    let arStarted = false;
-    let permissionRequested = false;
+          this.el.sceneEl.renderer.xr.addEventListener('sessionstart', () => {
+            const session = this.el.sceneEl.renderer.xr.getSession();
+            const viewerSpace = this.el.sceneEl.renderer.xr.getReferenceSpace();
+            session.requestReferenceSpace('viewer').then((refSpace) => {
+              session.requestHitTestSource({ space: refSpace }).then((source) => {
+                sceneEl.frame = (time, frame) => {
+                  if (frame) {
+                    const viewerPose = frame.getViewerPose(viewerSpace);
+                    if (viewerPose) {
+                      const hitTestResults = frame.getHitTestResults(source);
+                      if (hitTestResults.length > 0) {
+                        const hit = hitTestResults[0];
+                        const pose = hit.getPose(viewerSpace);
+                        reticle.object3D.visible = true;
+                        reticle.object3D.position.copy(pose.transform.position);
+                        reticle.object3D.quaternion.copy(pose.transform.orientation);
+                      }
+                    }
+                  }
+                };
+              });
+            });
+          });
 
-    const monitorARState = () => {
-      let checks = 0;
-      const maxChecks = 20;
-
-      const interval = setInterval(() => {
-        checks++;
-        if (window.XR8 && XR8.XrController && XR8.XrController.isRunning()) {
-          clearInterval(interval);
-          arStarted = true;
-          loadingScreen.style.display = 'none';
+          this.el.sceneEl.addEventListener('click', () => {
+            if (reticle.object3D.visible) {
+              object.setAttribute('visible', 'true');
+              object.object3D.position.copy(reticle.object3D.position);
+              object.object3D.quaternion.copy(reticle.object3D.quaternion);
+            }
+          });
         }
-
-        if (checks >= maxChecks) {
-          clearInterval(interval);
-          handleARStartFailure();
-        }
-      }, 500);
-    };
-
-    const showPermissionUI = () => {
-      permissionRequested = true;
-      permissionButton.style.display = 'block';
-      iosHelp.style.display = 'block';
-      loadingMessage.textContent = 'Camera access is required for AR';
-    };
-
-    const requestCameraPermission = () => {
-      navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-        stream.getTracks().forEach(track => track.stop());
-        window.location.reload();
-      }).catch(err => {
-        loadingMessage.textContent = 'Camera access denied. Please check Safari Settings.';
-        permissionButton.style.display = 'none';
-        retryButton.style.display = 'block';
       });
-    };
-
-    const handleARStartFailure = () => {
-      loadingMessage.textContent = 'AR failed to start.';
-
-      if (isIOS()) {
-        permissionButton.style.display = 'block';
-        retryButton.style.display = 'block';
-        iosHelp.style.display = 'block';
-
-        if (window.XR8 && XR8.XrController) {
-          const status = XR8.XrController.getSessionStatus();
-          if (status && status.error) {
-            loadingMessage.textContent = `AR Error: ${status.error}`;
-          }
-        }
-      } else {
-        retryButton.style.display = 'block';
-      }
-    };
-
-    scene.addEventListener('loaded', () => {
-      if (!('xr' in navigator)) {
-        loadingMessage.textContent = 'WebXR not supported on this browser.';
-        retryButton.style.display = 'none';
-        iosHelp.style.display = isIOS() ? 'block' : 'none';
-        return;
-      }
-
-      monitorARState();
-
-      navigator.permissions?.query({ name: 'camera' }).then(status => {
-        if (status.state !== 'granted' && isIOS()) {
-          showPermissionUI();
-        }
-      }).catch(() => {
-        // Permissions API not available – rely on timeout fallback
-      });
-
-      setTimeout(() => {
-        if (!arStarted && !permissionRequested && isIOS()) {
-          showPermissionUI();
-        }
-      }, 8000);
-    });
-
-    permissionButton.addEventListener('click', requestCameraPermission);
-    retryButton.addEventListener('click', () => location.reload());
-
-    initSurfacePlacement();
-  });
-
-  function initSurfacePlacement() {
-    const scene = document.querySelector('a-scene');
-    const modelTemplate = document.getElementById('model-template');
-    let modelCount = 0;
-
-    scene.addEventListener('click', (evt) => {
-      if (!evt.detail || !evt.detail.intersection) return;
-
-      const position = evt.detail.intersection.point;
-      const newModel = modelTemplate.cloneNode(true);
-      newModel.id = `model-${modelCount++}`;
-      newModel.setAttribute('visible', 'true');
-      newModel.object3D.position.copy(position);
-
-      if (evt.detail.intersection.face?.normal) {
-        const n = evt.detail.intersection.face.normal;
-        newModel.object3D.lookAt(position.x + n.x, position.y + n.y, position.z + n.z);
-      }
-
-      newModel.setAttribute('animation', {
-        property: 'scale',
-        from: '0.01 0.01 0.01',
-        to: '0.2 0.2 0.2',
-        dur: 300,
-        easing: 'easeOutElastic'
-      });
-
-      scene.appendChild(newModel);
-    });
-  }
-</script>
-
-</body>
+    </script>
+  </body>
 </html>
