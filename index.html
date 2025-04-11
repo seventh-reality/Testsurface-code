@@ -6,6 +6,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/aframe-extras@6.1.1/dist/aframe-extras.min.js"></script>
+    <style>
+    .a-enter-ar-button,
+    .a-enter-vr-button {
+      position: fixed !important;
+      left: 50% !important;
+      transform: translateX(-50%) !important;
+      bottom: 30px !important;
+      z-index: 9999 !important;
+      background-color: #007bff !important;
+      color: white !important;
+      padding: 12px 20px !important;
+      font-size: 16px !important;
+      border-radius: 10px !important;
+      border: none !important;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    }
+
+    .a-enter-ar-button:hover,
+    .a-enter-vr-button:hover {
+      background-color: #0056b3 !important;
+    }
+
+    @media (max-width: 600px) {
+      .a-enter-ar-button,
+      .a-enter-vr-button {
+        font-size: 14px !important;
+        padding: 10px 16px !important;
+      }
+    }
+  </style>
   </head>
   <body>
     <a-scene
