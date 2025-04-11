@@ -13,8 +13,7 @@ async function checkXRSupport() {
   }
   
   try {
-    const supported = await navigator.xr.isSessionSupported('immersive-ar');
-    return supported;
+    return await navigator.xr.isSessionSupported('immersive-ar');
   } catch (e) {
     console.error("XR support check failed:", e);
     return false;
@@ -85,14 +84,18 @@ async function init() {
     };
     
     xrSession = await navigator.xr.requestSession('immersive-ar', sessionInit);
-    renderer.xr.setSession(xrSession);
+    await renderer.xr.setSession(xrSession);
     
     document.getElementById('loading').style.display = 'none';
     
-    // Set up controller
+    // Set up controller - FIXED: Properly get the controller
     controller = renderer.xr.getController(0);
-    controller.addEventListener('select', onSelect);
-    scene.add(controller);
+    if (controller && controller.addEventListener) {
+      controller.addEventListener('select', onSelect);
+      scene.add(controller);
+    } else {
+      console.warn("XR controller not available");
+    }
     
     // Start animation loop
     renderer.setAnimationLoop(render);
