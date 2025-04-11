@@ -3,14 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <title>Universal WebAR Experience</title>
-  
-  <!-- Required Libraries -->
+  <title>WebAR Surface Tracking</title>
+  <!-- A-Frame -->
   <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/ar.js@3.4.0/dist/aframe-ar-nft.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
-  
+  <!-- AR.js for fallback -->
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
+  <!-- Three.js -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
   <style>
     body {
       margin: 0;
@@ -20,311 +19,308 @@
       -webkit-user-select: none;
       font-family: -apple-system, Arial, sans-serif;
     }
-    
-    #loading-screen {
-      position: fixed;
+    #ar-container {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+    }
+    #loading {
+      position: absolute;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
-      background: rgba(0,0,0,0.9);
+      background: rgba(0,0,0,0.8);
       display: flex;
       flex-direction: column;
       justify-content: center;
       align-items: center;
       color: white;
-      z-index: 1000;
+      z-index: 100;
     }
-    
-    #status {
-      margin-top: 20px;
-      text-align: center;
-      max-width: 80%;
-    }
-    
-    #compatibility-warning {
-      display: none;
-      background: #ff3b30;
-      color: white;
-      padding: 15px;
-      border-radius: 10px;
-      margin-top: 20px;
-      max-width: 80%;
-      text-align: center;
-    }
-    
-    #start-button {
-      margin-top: 20px;
-      padding: 12px 24px;
-      background: #007AFF;
-      color: white;
-      border: none;
-      border-radius: 20px;
-      font-size: 16px;
-      cursor: pointer;
-      display: none;
-    }
-    
-    #ar-overlay {
-      position: fixed;
+    #info {
+      position: absolute;
       bottom: 20px;
       left: 0;
       right: 0;
       text-align: center;
       color: white;
       text-shadow: 1px 1px 2px black;
-      z-index: 999;
+      z-index: 10;
       pointer-events: none;
     }
-    
-    .arjs-loader {
-      display: none !important;
+    #start-button {
+      padding: 12px 24px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+    .unsupported {
+      color: #ff4444;
+      margin-top: 20px;
+    }
+    #mode-selector {
+      position: absolute;
+      top: 20px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      z-index: 50;
+      display: none;
     }
   </style>
 </head>
 <body>
-  <div id="loading-screen">
-    <h1>Loading AR Experience</h1>
-    <div id="status">Initializing...</div>
-    <div id="compatibility-warning"></div>
+  <div id="loading">
+    <h1>WebAR Experience</h1>
+    <p>Loading AR capabilities...</p>
+    <div id="support-message"></div>
     <button id="start-button">Start AR</button>
   </div>
-  
-  <div id="ar-overlay">Point your camera at a surface or marker</div>
 
-  <!-- Main AR Scene -->
-  <a-scene 
-    vr-mode-ui="enabled: false"
-    renderer="colorManagement: true; antialias: true;"
-    embedded
-    arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;"
-    gesture-detector
-    id="scene">
-    
-    <!-- Camera -->
-    <a-camera gps-camera rotation-reader></a-camera>
-    
-    <!-- Lighting -->
-    <a-light type="ambient" color="#FFF" intensity="0.5"></a-light>
-    <a-light type="directional" color="#FFF" intensity="0.5" position="-1 1 1"></a-light>
-    
-    <!-- Marker-based AR content (for AR.js) -->
-    <a-marker preset="hiro">
-      <a-box position="0 0.5 0" material="color: red"></a-box>
-    </a-marker>
-    
-    <!-- WebXR/WebRTC content -->
-    <a-entity id="webar-content" visible="false">
-      <a-box position="0 0 -1" scale="0.5 0.5 0.5" color="blue"></a-box>
-    </a-entity>
-    
-    <!-- Fallback content for non-AR devices -->
-    <a-entity id="fallback-content" visible="false">
-      <a-box position="0 0 -2" scale="0.5 0.5 0.5" color="green"></a-box>
-    </a-entity>
-  </a-scene>
+  <div id="mode-selector">
+    <button id="webxr-mode">Use WebXR (Recommended)</button>
+    <button id="arjs-mode">Use AR.js (Fallback)</button>
+  </div>
+
+  <div id="info">Move device to detect surfaces. Tap to place objects.</div>
+  
+  <div id="ar-container"></div>
 
   <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      const loadingScreen = document.getElementById('loading-screen');
-      const statusElement = document.getElementById('status');
-      const warningElement = document.getElementById('compatibility-warning');
-      const startButton = document.getElementById('start-button');
-      const scene = document.getElementById('scene');
-      const webarContent = document.getElementById('webar-content');
-      const fallbackContent = document.getElementById('fallback-content');
+    // Configuration
+    const config = {
+      useWebXR: true,
+      useARJS: true,
+      modelUrl: 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Box/glTF/Box.gltf',
+      fallbackModel: {
+        geometry: new THREE.BoxGeometry(0.3, 0.3, 0.3),
+        material: new THREE.MeshStandardMaterial({ color: 0x00ff00 })
+      }
+    };
+
+    // Global variables
+    let currentMode = null;
+    let scene, camera, renderer, controller;
+    let hitTestSource = null;
+    let model = null;
+    let reticle = null;
+
+    // Check for WebXR support
+    async function checkXRSupport() {
+      if (!navigator.xr) return false;
       
-      // Detect device capabilities
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-                   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-      const isAndroid = /Android/.test(navigator.userAgent);
-      const isMobile = isIOS || isAndroid;
+      try {
+        return await navigator.xr.isSessionSupported('immersive-ar');
+      } catch (e) {
+        console.error("XR support check failed:", e);
+        return false;
+      }
+    }
+
+    // Initialize WebXR mode
+    async function initWebXR() {
+      currentMode = 'webxr';
       
-      // Check for WebXR support
-      const hasWebXR = 'xr' in navigator && 'isSessionSupported' in navigator.xr;
+      // Create Three.js scene
+      scene = new THREE.Scene();
       
-      // Check for WebRTC support
-      const hasWebRTC = !!navigator.mediaDevices && !!navigator.mediaDevices.getUserMedia;
+      // Create camera
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
       
-      // Check for AR.js support
-      const hasARJS = !!window.ARjs;
+      // Create renderer with WebXR support
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      document.getElementById('ar-container').appendChild(renderer.domElement);
       
-      // Main initialization function
-      const initializeAR = async () => {
-        statusElement.textContent = "Checking device capabilities...";
-        
-        try {
-          // First try WebXR (modern devices)
-          if (hasWebXR) {
-            statusElement.textContent = "Attempting WebXR...";
-            await initializeWebXR();
-            return;
-          }
-          
-          // Then try AR.js (older devices)
-          if (hasARJS && hasWebRTC) {
-            statusElement.textContent = "Attempting AR.js marker-based AR...";
-            await initializeARJS();
-            return;
-          }
-          
-          // Fallback to simple WebRTC camera view
-          if (hasWebRTC) {
-            statusElement.textContent = "Using basic camera view...";
-            await initializeWebRTC();
-            return;
-          }
-          
-          // Final fallback
-          showFallback();
-        } catch (error) {
-          console.error("AR initialization failed:", error);
-          handleError(error);
-        }
-      };
+      // Add lighting
+      const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+      scene.add(light);
       
-      // WebXR Initialization
-      const initializeWebXR = async () => {
-        try {
-          const supported = await navigator.xr.isSessionSupported('immersive-ar');
-          if (supported) {
-            statusElement.textContent = "WebXR supported, starting session...";
-            
-            // Configure A-Frame for WebXR
-            scene.setAttribute('webxr', 'optionalFeatures: hit-test; requiredFeatures: local-floor');
-            
-            // Show WebXR content
-            webarContent.setAttribute('visible', 'true');
-            
-            // Wait for scene to load
-            scene.addEventListener('loaded', () => {
-              setTimeout(() => {
-                loadingScreen.style.display = 'none';
-                statusElement.textContent = "WebXR session started";
-              }, 1000);
-            });
-            
-            return;
-          }
-          throw new Error("WebXR AR not supported");
-        } catch (error) {
-          throw error;
-        }
-      };
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(0.5, 1, 0.25);
+      scene.add(directionalLight);
       
-      // AR.js Initialization
-      const initializeARJS = () => {
-        return new Promise((resolve) => {
-          // AR.js is already initialized with the scene
-          scene.addEventListener('arjs-nft-loaded', () => {
-            statusElement.textContent = "AR.js ready";
-            resolve();
-          });
-          
-          scene.addEventListener('loaded', () => {
-            setTimeout(() => {
-              loadingScreen.style.display = 'none';
-              statusElement.textContent = "AR.js session started";
-            }, 1000);
-          });
-        });
-      };
+      // Create reticle for placement
+      reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xffffff })
+      );
+      reticle.matrixAutoUpdate = false;
+      reticle.visible = false;
+      scene.add(reticle);
       
-      // WebRTC Initialization (fallback)
-      const initializeWebRTC = () => {
-        return new Promise((resolve) => {
-          // Just show the camera feed without AR
-          scene.setAttribute('arjs', 'sourceType: webcam; debugUIEnabled: false');
-          fallbackContent.setAttribute('visible', 'true');
-          
-          scene.addEventListener('loaded', () => {
-            setTimeout(() => {
-              loadingScreen.style.display = 'none';
-              statusElement.textContent = "Camera view started";
-            }, 1000);
-          });
-          
-          resolve();
-        });
-      };
-      
-      // Show simple fallback content
-      const showFallback = () => {
-        warningElement.textContent = "AR features not available on this device. Showing 3D content.";
-        warningElement.style.display = 'block';
-        fallbackContent.setAttribute('visible', 'true');
-        
-        scene.addEventListener('loaded', () => {
-          setTimeout(() => {
-            loadingScreen.style.display = 'none';
-          }, 1000);
-        });
-      };
-      
-      // Handle errors
-      const handleError = (error) => {
-        console.error("AR Error:", error);
-        warningElement.textContent = `Error: ${error.message || 'AR initialization failed'}`;
-        warningElement.style.display = 'block';
-        
-        // Show fallback options
-        if (hasWebRTC) {
-          startButton.style.display = 'block';
-          startButton.textContent = "Try Basic Camera View";
-          startButton.onclick = initializeWebRTC;
-        } else {
-          showFallback();
-        }
-      };
-      
-      // iOS-specific permission handling
-      const handleIOSPermissions = () => {
-        if (!isIOS) return;
-        
-        statusElement.textContent = "iOS device detected, checking permissions...";
-        
-        // iOS requires user interaction for camera access
-        startButton.style.display = 'block';
-        startButton.textContent = "Allow Camera Access";
-        startButton.onclick = () => {
-          statusElement.textContent = "Requesting camera permission...";
-          
-          // Create temporary video element to trigger permission
-          const tempVideo = document.createElement('video');
-          tempVideo.setAttribute('playsinline', '');
-          tempVideo.setAttribute('webkit-playsinline', '');
-          tempVideo.width = 1;
-          tempVideo.height = 1;
-          document.body.appendChild(tempVideo);
-          
-          navigator.mediaDevices.getUserMedia({ video: true })
-            .then(stream => {
-              // Clean up
-              stream.getTracks().forEach(track => track.stop());
-              document.body.removeChild(tempVideo);
-              
-              // Continue with AR initialization
-              startButton.style.display = 'none';
-              initializeAR();
-            })
-            .catch(err => {
-              console.error("Camera permission denied:", err);
-              document.body.removeChild(tempVideo);
-              statusElement.textContent = "Please enable camera access in Settings";
-              warningElement.textContent = "Camera access is required for AR features";
-              warningElement.style.display = 'block';
-            });
-        };
-      };
-      
-      // Start initialization
-      if (isMobile) {
-        handleIOSPermissions();
+      // Load model
+      const loader = new THREE.GLTFLoader();
+      try {
+        const gltf = await loader.loadAsync(config.modelUrl);
+        model = gltf.scene;
+        model.scale.set(0.3, 0.3, 0.3);
+      } catch (e) {
+        console.error("Failed to load model, using fallback:", e);
+        model = new THREE.Mesh(config.fallbackModel.geometry, config.fallbackModel.material);
       }
       
-      // For non-iOS devices or if iOS permissions are already granted
-      if (!isIOS || (isIOS && !startButton.style.display !== 'none')) {
-        initializeAR();
+      // Start AR session
+      try {
+        const sessionInit = { 
+          optionalFeatures: ['hit-test', 'dom-overlay'],
+          domOverlay: { root: document.body }
+        };
+        
+        const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
+        await renderer.xr.setSession(session);
+        
+        document.getElementById('loading').style.display = 'none';
+        
+        // Set up controller
+        controller = renderer.xr.getController(0);
+        controller.addEventListener('select', onSelect);
+        scene.add(controller);
+        
+        // Start animation loop
+        renderer.setAnimationLoop(render);
+      } catch (e) {
+        console.error("WebXR session failed:", e);
+        fallbackToARJS();
+      }
+    }
+
+    // Initialize AR.js fallback mode
+    function initARJS() {
+      currentMode = 'arjs';
+      document.getElementById('ar-container').innerHTML = `
+        <a-scene 
+          vr-mode-ui="enabled: false"
+          arjs="sourceType: webcam; detectionMode: mono; matrixCodeType: 3x3;"
+          renderer="logarithmicDepthBuffer: true; precision: medium;"
+          embedded>
+          
+          <a-camera gps-camera rotation-reader></a-camera>
+          
+          <a-entity gltf-model="${config.modelUrl}" scale="0.3 0.3 0.3" 
+                   position="0 0 -1" rotation="0 0 0" class="clickable"
+                   animation="property: scale; to: 0.3 0.3 0.3; dur: 1000; easing: easeOutElastic">
+          </a-entity>
+          
+          <a-entity cursor="rayOrigin: mouse" raycaster="objects: .clickable"></a-entity>
+        </a-scene>
+      `;
+      
+      document.getElementById('loading').style.display = 'none';
+    }
+
+    // Fallback to AR.js if WebXR fails
+    function fallbackToARJS() {
+      if (!config.useARJS) {
+        document.getElementById('support-message').innerHTML = 
+          '<p class="unsupported">AR not supported on this device</p>';
+        return;
+      }
+      
+      document.getElementById('mode-selector').style.display = 'none';
+      initARJS();
+    }
+
+    // Main render loop for WebXR
+    function render(timestamp, frame) {
+      if (!frame) return;
+      
+      // Request hit test source if not done yet
+      if (!hitTestSource && frame.session && frame.session.requestHitTestSource) {
+        frame.session.requestReferenceSpace('viewer').then((referenceSpace) => {
+          return frame.session.requestHitTestSource({ space: referenceSpace });
+        }).then((source) => {
+          hitTestSource = source;
+        }).catch((err) => {
+          console.error("Hit test failed:", err);
+        });
+      }
+      
+      // Get hit test results
+      if (hitTestSource && frame) {
+        const hitTestResults = frame.getHitTestResults(hitTestSource);
+        
+        if (hitTestResults.length > 0) {
+          const hit = hitTestResults[0];
+          const pose = hit.getPose(renderer.xr.getReferenceSpace());
+          
+          reticle.visible = true;
+          reticle.matrix.fromArray(pose.transform.matrix);
+        } else {
+          reticle.visible = false;
+        }
+      }
+      
+      renderer.render(scene, camera);
+    }
+
+    // Handle tap/click to place objects (WebXR)
+    function onSelect() {
+      if (reticle.visible && model) {
+        const newModel = model.clone();
+        newModel.position.setFromMatrixPosition(reticle.matrix);
+        
+        // Random color for demonstration
+        newModel.traverse((child) => {
+          if (child.isMesh) {
+            child.material.color.setHex(Math.random() * 0xffffff);
+          }
+        });
+        
+        scene.add(newModel);
+      }
+    }
+
+    // Handle window resize
+    function onWindowResize() {
+      if (camera) {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+      }
+      if (renderer) {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+    }
+
+    // Start button event listener
+    document.getElementById('start-button').addEventListener('click', async () => {
+      const supported = await checkXRSupport();
+      
+      if (supported && config.useWebXR) {
+        if (config.useARJS) {
+          document.getElementById('mode-selector').style.display = 'block';
+          document.getElementById('webxr-mode').addEventListener('click', initWebXR);
+          document.getElementById('arjs-mode').addEventListener('click', initARJS);
+        } else {
+          initWebXR();
+        }
+      } else if (config.useARJS) {
+        fallbackToARJS();
+      } else {
+        document.getElementById('support-message').innerHTML = 
+          '<p class="unsupported">AR not supported on this device</p>';
+      }
+    });
+
+    // Handle window resize
+    window.addEventListener('resize', onWindowResize);
+
+    // Check for AR support on page load
+    window.addEventListener('load', async () => {
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const isAndroid = /Android/.test(navigator.userAgent);
+      
+      // Special handling for older devices
+      if ((isIOS && !window.IOS_WEBXR_AVAILABLE) || (isAndroid && !navigator.xr)) {
+        document.getElementById('support-message').innerHTML = 
+          '<p>Using compatibility mode for this device</p>';
       }
     });
   </script>
