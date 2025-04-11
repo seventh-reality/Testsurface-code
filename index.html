@@ -177,7 +177,7 @@
   
   <div id="ar-container"></div>
 
-  <script>
+    <script>
     // Configuration
     const config = {
       useWebXR: true,
@@ -189,23 +189,92 @@
       iosViewportFix: true
     };
 
-    // [Previous JavaScript code remains exactly the same until the start button event listener]
+    // Global variables
+    let currentMode = null;
+    let scene, camera, renderer, controller;
+    let hitTestSource = null;
+    let model = null;
+    let reticle = null;
+    let arjsScene = null;
+    let placedModels = [];
+    let lastPosition = new THREE.Vector3();
+    let isTrackingStable = false;
+    let lastStableTime = 0;
 
-    // Start button event listener - THIS IS THE KEY FIX
+    // Check for iOS
+    const isIOS = () => {
+      return /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+             (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    };
+
+    // iOS viewport fix
+    function applyIOSViewportFix() {
+      if (!isIOS() || !config.iosViewportFix) return;
+      
+      const viewportMeta = document.querySelector('meta[name="viewport"]');
+      if (viewportMeta) {
+        viewportMeta.content = viewportMeta.content + ', shrink-to-fit=no';
+      }
+      
+      document.body.style.overflow = 'hidden';
+      document.body.style.position = 'fixed';
+      document.body.style.top = '0';
+      document.body.style.left = '0';
+      document.body.style.right = '0';
+      document.body.style.bottom = '0';
+    }
+
+    // Check for WebXR support
+    async function checkXRSupport() {
+      if (!navigator.xr) {
+        if (config.debug) console.log("WebXR not available in this browser");
+        return false;
+      }
+      
+      try {
+        const supported = await navigator.xr.isSessionSupported('immersive-ar');
+        if (config.debug) console.log("WebXR AR supported:", supported);
+        return supported;
+      } catch (e) {
+        console.error("XR support check failed:", e);
+        return false;
+      }
+    }
+
+    // Check camera permissions
+    async function checkCameraPermissions() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          } 
+        });
+        stream.getTracks().forEach(track => track.stop());
+        return true;
+      } catch (e) {
+        console.error("Camera permission denied:", e);
+        return false;
+      }
+    }
+
+    // [Keep all other functions exactly the same as in your original code...]
+    // Initialize WebXR, initARJS, showCameraError, placeModelARJS, etc.
+    // Make sure all functions are defined before they're called
+
+    // Start button event listener - moved to the bottom
     document.getElementById('start-button').addEventListener('click', async () => {
       const supported = await checkXRSupport();
       const isAndroid = /Android/.test(navigator.userAgent);
       
-      // Disable the start button
       document.getElementById('start-button').disabled = true;
       
       if ((supported && config.useWebXR) || isAndroid || isIOS()) {
         if (config.useARJS) {
-          // Hide the loading screen and show mode selector
           document.getElementById('loading').style.display = 'none';
           document.getElementById('mode-selector').style.display = 'flex';
           
-          // Set up mode buttons
           document.getElementById('webxr-btn').addEventListener('click', () => {
             document.getElementById('mode-selector').style.display = 'none';
             document.getElementById('loading').style.display = 'flex';
@@ -228,7 +297,21 @@
       }
     });
 
-    // [Rest of the JavaScript code remains exactly the same]
+    // Handle window resize
+    window.addEventListener('resize', onWindowResize);
+
+    // Check for AR support on page load
+    window.addEventListener('load', () => {
+      applyIOSViewportFix();
+      
+      if (isIOS()) {
+        document.getElementById('support-message').innerHTML = 
+          '<p>iOS device detected. For best results, use Safari and iOS 13+</p>';
+      } else if (/Android/.test(navigator.userAgent)) {
+        document.getElementById('support-message').innerHTML = 
+          '<p>Android device detected. Please select AR mode.</p>';
+      }
+    });
   </script>
 </body>
 </html>
