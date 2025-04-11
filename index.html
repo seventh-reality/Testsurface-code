@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <title>Stable WebAR Surface Tracking</title>
+  <title>iOS Stable WebAR</title>
   <!-- A-Frame -->
   <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe.min.js"></script>
   <!-- AR.js for fallback -->
@@ -26,6 +26,7 @@
       position: absolute;
       width: 100%;
       height: 100%;
+      overflow: hidden;
     }
     #loading {
       position: absolute;
@@ -126,11 +127,19 @@
       z-index: 30;
       display: none;
     }
+    /* iOS specific fixes */
+    .a-enter-vr-button, .a-enter-ar-button {
+      display: none !important;
+    }
+    #ar-container canvas {
+      width: 100% !important;
+      height: 100% !important;
+    }
   </style>
 </head>
 <body>
   <div id="loading">
-    <h1>Stable WebAR Surface Tracking</h1>
+    <h1>iOS Stable AR Experience</h1>
     <p>Initializing AR environment...</p>
     <div id="support-message"></div>
     <button id="start-button">Start AR Experience</button>
@@ -142,7 +151,7 @@
     <button id="arjs-btn" class="mode-btn">AR.js (Compatibility)</button>
   </div>
 
-  <div id="info">Move device to detect surfaces. Tap to place objects.</div>
+  <div id="info">Move device slowly to detect surfaces. Tap to place objects.</div>
   <div id="surface-indicator"></div>
   <div id="stability-notice">Move device slowly for better tracking</div>
   <div id="camera-error">
@@ -160,7 +169,8 @@
       modelUrl: 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Duck/glTF/Duck.gltf',
       debug: true,
       modelScale: 0.5,
-      stabilityThreshold: 0.1 // Lower means more stable tracking required
+      stabilityThreshold: 0.05, // Lower means more stable tracking required
+      iosViewportFix: true
     };
 
     // Global variables
@@ -173,6 +183,31 @@
     let placedModels = [];
     let lastPosition = new THREE.Vector3();
     let isTrackingStable = false;
+    let lastStableTime = 0;
+
+    // Check for iOS
+    const isIOS = () => {
+      return /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+             (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    };
+
+    // iOS viewport fix
+    function applyIOSViewportFix() {
+      if (!isIOS() || !config.iosViewportFix) return;
+      
+      const viewportMeta = document.querySelector('meta[name="viewport"]');
+      if (viewportMeta) {
+        viewportMeta.content = viewportMeta.content + ', shrink-to-fit=no';
+      }
+      
+      // Prevent elastic scrolling
+      document.body.style.overflow = 'hidden';
+      document.body.style.position = 'fixed';
+      document.body.style.top = '0';
+      document.body.style.left = '0';
+      document.body.style.right = '0';
+      document.body.style.bottom = '0';
+    }
 
     // Check for WebXR support
     async function checkXRSupport() {
@@ -195,7 +230,13 @@
     async function checkCameraPermissions() {
       try {
         // Try to access camera
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          } 
+        });
         stream.getTracks().forEach(track => track.stop());
         return true;
       } catch (e) {
@@ -221,32 +262,57 @@
         // Create Three.js scene
         scene = new THREE.Scene();
         
-        // Create camera
-        camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+        // Create camera with adjusted parameters for iOS
+        camera = new THREE.PerspectiveCamera(
+          60, // Slightly wider field of view
+          window.innerWidth / window.innerHeight, 
+          0.1, // Increased near plane
+          100 // Increased far plane
+        );
         
         // Create renderer with WebXR support
         renderer = new THREE.WebGLRenderer({ 
           antialias: true, 
           alpha: true,
-          powerPreference: "high-performance"
+          powerPreference: "high-performance",
+          preserveDrawingBuffer: true // Helps with iOS rendering
         });
-        renderer.setPixelRatio(window.devicePixelRatio);
+        
+        // iOS specific renderer settings
+        if (isIOS()) {
+          renderer.setPixelRatio(1); // Reduce pixel ratio for better performance
+          renderer.domElement.style.position = 'absolute';
+          renderer.domElement.style.top = '0';
+          renderer.domElement.style.left = '0';
+        } else {
+          renderer.setPixelRatio(window.devicePixelRatio);
+        }
+        
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.xr.enabled = true;
-        document.getElementById('ar-container').appendChild(renderer.domElement);
         
-        // Add lighting
-        const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+        // Clear previous content and append fresh renderer
+        const container = document.getElementById('ar-container');
+        container.innerHTML = '';
+        container.appendChild(renderer.domElement);
+        
+        // Add lighting - increased intensity for better visibility
+        const light = new THREE.HemisphereLight(0xffffff, 0x444444, 2);
+        light.position.set(0, 1, 0);
         scene.add(light);
         
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
         directionalLight.position.set(0.5, 1, 0.25);
         scene.add(directionalLight);
         
         // Create reticle for surface indication
         reticle = new THREE.Mesh(
           new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
-          new THREE.MeshBasicMaterial({ color: 0xffffff })
+          new THREE.MeshBasicMaterial({ 
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.8
+          })
         );
         reticle.matrixAutoUpdate = false;
         reticle.visible = false;
@@ -264,6 +330,15 @@
           );
           model = gltf.scene;
           model.scale.set(config.modelScale, config.modelScale, config.modelScale);
+          
+          // Add shadow to model for better depth perception
+          model.traverse(child => {
+            if (child.isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
+          
           if (config.debug) console.log("3D model loaded successfully");
         } catch (e) {
           console.error("Failed to load model:", e);
@@ -271,7 +346,11 @@
             '<p class="unsupported">Failed to load 3D model</p>';
           model = new THREE.Mesh(
             new THREE.BoxGeometry(config.modelScale, config.modelScale, config.modelScale),
-            new THREE.MeshStandardMaterial({ color: 0x00ff00 })
+            new THREE.MeshStandardMaterial({ 
+              color: 0x00ff00,
+              roughness: 0.5,
+              metalness: 0.5
+            })
           );
         }
         
@@ -283,6 +362,14 @@
           };
           
           const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
+          
+          // iOS specific session configuration
+          if (isIOS()) {
+            session.updateRenderState({
+              baseLayer: new XRWebGLLayer(session, renderer.context)
+            });
+          }
+          
           await renderer.xr.setSession(session);
           
           document.getElementById('loading').style.display = 'none';
@@ -327,11 +414,12 @@
         document.getElementById('ar-container').innerHTML = `
           <a-scene 
             vr-mode-ui="enabled: false"
-            arjs="sourceType: webcam; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
-            renderer="logarithmicDepthBuffer: true; precision: medium;"
+            arjs="sourceType: webcam; detectionMode: mono_and_matrix; matrixCodeType: 3x3; debugUIEnabled: false"
+            renderer="logarithmicDepthBuffer: true; precision: medium; antialias: true; alpha: true"
             embedded
             cursor="rayOrigin: mouse; fuse: false"
-            raycaster="objects: .clickable">
+            raycaster="objects: .clickable"
+            gesture-detector>
             
             <a-camera gps-camera rotation-reader></a-camera>
             
@@ -344,8 +432,13 @@
             <!-- Model template (hidden) -->
             <a-entity id="model-template" gltf-model="${config.modelUrl}" 
                      scale="${config.modelScale} ${config.modelScale} ${config.modelScale}" 
-                     visible="false" class="placeable-model">
+                     visible="false" class="placeable-model"
+                     shadow="cast: true; receive: true">
             </a-entity>
+            
+            <!-- Add some lighting -->
+            <a-light type="ambient" color="#ffffff" intensity="0.8"></a-light>
+            <a-light type="directional" color="#ffffff" intensity="0.8" position="1 1 1"></a-light>
           </a-scene>
         `;
         
@@ -398,6 +491,13 @@
         to: `${config.modelScale} ${config.modelScale} ${config.modelScale}`,
         dur: 500,
         easing: 'easeOutElastic'
+      });
+      
+      // Add slight random rotation
+      newModel.setAttribute('rotation', {
+        x: 0,
+        y: Math.random() * 360,
+        z: 0
       });
       
       arjsScene.appendChild(newModel);
@@ -456,20 +556,33 @@
           const hit = hitTestResults[0];
           const pose = hit.getPose(renderer.xr.getReferenceSpace());
           
-          // Check tracking stability
+          // Check tracking stability with more stringent requirements
           const currentPosition = new THREE.Vector3().fromArray(pose.transform.position);
           const distance = lastPosition.distanceTo(currentPosition);
-          isTrackingStable = distance < config.stabilityThreshold;
+          const currentTime = performance.now();
+          
+          // Only consider stable if position hasn't changed much and some time has passed
+          isTrackingStable = distance < config.stabilityThreshold && 
+                           (currentTime - lastStableTime) > 500;
           
           if (isTrackingStable) {
             reticle.visible = true;
             reticle.matrix.fromArray(pose.transform.matrix);
             
-            // Update surface indicator position
-            updateWebXRIndicator(currentPosition);
+            // Smooth position updates
+            const smoothFactor = 0.3;
+            const smoothedPosition = new THREE.Vector3().lerpVectors(
+              lastPosition, 
+              currentPosition, 
+              smoothFactor
+            );
             
-            // Store last stable position
-            lastPosition.copy(currentPosition);
+            // Update surface indicator position
+            updateWebXRIndicator(smoothedPosition);
+            
+            // Store last stable position and time
+            lastPosition.copy(smoothedPosition);
+            lastStableTime = currentTime;
           } else {
             reticle.visible = false;
             document.getElementById('surface-indicator').style.display = 'none';
@@ -516,15 +629,25 @@
         scene.add(newModel);
         placedModels.push(newModel);
         
-        // Animate the model
+        // Animate the model with more pronounced effect
         new TWEEN.Tween(newModel.scale)
           .to({ 
-            x: config.modelScale, 
-            y: config.modelScale, 
-            z: config.modelScale 
-          }, 500)
+            x: config.modelScale * 1.1, 
+            y: config.modelScale * 1.1, 
+            z: config.modelScale * 1.1 
+          }, 300)
           .easing(TWEEN.Easing.Elastic.Out)
-          .start();
+          .start()
+          .onComplete(() => {
+            // Slight bounce back to normal size
+            new TWEEN.Tween(newModel.scale)
+              .to({ 
+                x: config.modelScale, 
+                y: config.modelScale, 
+                z: config.modelScale 
+              }, 200)
+              .start();
+          });
       }
     }
 
@@ -547,7 +670,7 @@
       // Disable the button to prevent multiple clicks
       document.getElementById('start-button').disabled = true;
       
-      if ((supported && config.useWebXR) || isAndroid) {
+      if ((supported && config.useWebXR) || isAndroid || isIOS()) {
         if (config.useARJS) {
           // Show mode selector but keep the loading screen visible
           document.getElementById('mode-selector').style.display = 'block';
@@ -575,16 +698,16 @@
 
     // Check for AR support on page load
     window.addEventListener('load', () => {
-      // Check device capabilities
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-      const isAndroid = /Android/.test(navigator.userAgent);
+      // Apply iOS specific fixes
+      applyIOSViewportFix();
       
-      if (isAndroid) {
+      // Check device capabilities
+      if (isIOS()) {
+        document.getElementById('support-message').innerHTML = 
+          '<p>iOS device detected. For best results, use Safari and iOS 13+</p>';
+      } else if (/Android/.test(navigator.userAgent)) {
         document.getElementById('support-message').innerHTML = 
           '<p>Android device detected. Please select AR mode.</p>';
-      } else if (isIOS && !window.IOS_WEBXR_AVAILABLE) {
-        document.getElementById('support-message').innerHTML = 
-          '<p>Using compatibility mode for this device</p>';
       }
     });
   </script>
