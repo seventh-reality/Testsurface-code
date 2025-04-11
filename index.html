@@ -3,12 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>Open Source WebAR</title>
+  <title>WebXR AR Surface Tracking</title>
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/WebXR.js"></script>
-  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/XRControllerModelFactory.js"></script>
   <style>
     body {
       margin: 0;
@@ -44,6 +42,7 @@
       color: white;
       text-shadow: 1px 1px 2px black;
       z-index: 10;
+      pointer-events: none;
     }
     #start-button {
       padding: 12px 24px;
@@ -55,16 +54,21 @@
       cursor: pointer;
       margin-top: 20px;
     }
+    .unsupported {
+      color: #ff4444;
+      margin-top: 20px;
+    }
   </style>
 </head>
 <body>
   <div id="loading">
-    <h1>WebAR Learning Experience</h1>
-    <p>For educational purposes - requires WebXR compatible browser</p>
-    <button id="start-button">Start AR Experience</button>
+    <h1>WebXR AR Experience</h1>
+    <p>For educational purposes - requires AR compatible browser</p>
+    <div id="support-message"></div>
+    <button id="start-button">Start AR</button>
   </div>
 
-  <div id="info">Move your device to detect surfaces. Tap to place objects.</div>
+  <div id="info">Move device to detect surfaces. Tap to place objects.</div>
   
   <div id="ar-container"></div>
 
