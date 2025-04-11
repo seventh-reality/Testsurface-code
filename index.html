@@ -3,28 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>8th Wall Surface Tracking</title>
-  <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe.min.js"></script>
-  <script src="//cdn.8thwall.com/web/aframe/aframe-master.js"></script>
-  <script src="//cdn.8thwall.com/web/xrextras/xrextras.js"></script>
+  <title>Open Source WebAR</title>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/WebXR.js"></script>
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
   <style>
-    html, body {
+    body {
       margin: 0;
       padding: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+    }
+    #ar-container {
+      position: absolute;
       width: 100%;
       height: 100%;
-      overflow: hidden;
-    }
-    #ar-overlay {
-      position: absolute;
-      bottom: 20px;
-      left: 0;
-      right: 0;
-      text-align: center;
-      color: white;
-      font-family: Arial, sans-serif;
-      text-shadow: 1px 1px 2px black;
-      z-index: 1000;
     }
     #loading {
       position: absolute;
@@ -34,41 +29,44 @@
       height: 100%;
       background: rgba(0,0,0,0.8);
       display: flex;
+      flex-direction: column;
       justify-content: center;
       align-items: center;
       color: white;
-      font-family: Arial, sans-serif;
-      z-index: 1001;
+      z-index: 100;
+    }
+    #info {
+      position: absolute;
+      bottom: 20px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: white;
+      text-shadow: 1px 1px 2px black;
+      z-index: 10;
+    }
+    #start-button {
+      padding: 12px 24px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-top: 20px;
     }
   </style>
 </head>
 <body>
-  <div id="loading">Initializing AR...</div>
-  <div id="ar-overlay">Tap on detected surfaces to place objects</div>
+  <div id="loading">
+    <h1>WebAR Learning Experience</h1>
+    <p>For educational purposes - requires WebXR compatible browser</p>
+    <button id="start-button">Start AR Experience</button>
+  </div>
 
-  <a-scene 
-    xrweb="disableWorldTracking: false"
-    xrextras-almost-there
-    xrextras-runtime-error
-    xrextras-loading
-    renderer="colorManagement: true;"
-    background="color: #FAFAFA"
-    xrextras-gesture-detector
-    xrextras-surface-placement>
-
-    <!-- Camera setup -->
-    <a-entity camera></a-entity>
-    
-    <!-- Lighting -->
-    <a-entity light="type: ambient; color: #FFF; intensity: 0.5"></a-entity>
-    <a-entity light="type: directional; color: #FFF; intensity: 0.5" position="-1 1 1"></a-entity>
-    
-    <!-- Surface visualization (optional) -->
-    <a-entity xrextras-surface-visualizer></a-entity>
-    
-    <!-- Example 3D model to place (can be replaced with your own) -->
-    <a-entity id="model-template" gltf-model="https://cdn.8thwall.com/web/assets/box/box.glb" scale="0.2 0.2 0.2" visible="false"></a-entity>
-  </a-scene>
+  <div id="info">Move your device to detect surfaces. Tap to place objects.</div>
+  
+  <div id="ar-container"></div>
 
   <script src="app.js"></script>
 </body>
