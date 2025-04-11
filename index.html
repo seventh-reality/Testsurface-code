@@ -23,13 +23,15 @@
       font-family: -apple-system, Arial, sans-serif;
     }
     #ar-container {
-      position: absolute;
-      width: 100%;
-      height: 100%;
+      position: fixed;  /* Changed from absolute to fixed */
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
       overflow: hidden;
     }
     #loading {
-      position: absolute;
+      position: fixed;
       top: 0;
       left: 0;
       width: 100%;
@@ -43,7 +45,7 @@
       z-index: 100;
     }
     #info {
-      position: absolute;
+      position: fixed;
       bottom: 20px;
       left: 0;
       right: 0;
@@ -68,7 +70,7 @@
       margin-top: 20px;
     }
     #surface-indicator {
-      position: absolute;
+      position: fixed;
       width: 40px;
       height: 40px;
       border: 2px solid rgba(255,255,255,0.8);
@@ -78,7 +80,7 @@
       display: none;
     }
     #gesture-help {
-      position: absolute;
+      position: fixed;
       bottom: 60px;
       left: 0;
       right: 0;
@@ -88,6 +90,12 @@
       padding: 10px;
       z-index: 15;
       display: none;
+    }
+    /* Ensure canvas fills container */
+    canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
     }
   </style>
 </head>
@@ -171,7 +179,8 @@
           alpha: true,
           powerPreference: "high-performance"
         });
-        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio || 1);
+        renderer.setSize(window.innerWidth, window.innerHeight, false);
         renderer.xr.enabled = true;
         document.getElementById('ar-container').appendChild(renderer.domElement);
         
@@ -530,7 +539,7 @@
         camera.updateProjectionMatrix();
       }
       if (renderer) {
-        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setSize(window.innerWidth, window.innerHeight, false);
       }
     }
 
