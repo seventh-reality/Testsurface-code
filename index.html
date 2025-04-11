@@ -177,7 +177,7 @@
   
   <div id="ar-container"></div>
 
-    <script>
+   <script>
     // Configuration
     const config = {
       useWebXR: true,
@@ -259,11 +259,289 @@
       }
     }
 
-    // [Keep all other functions exactly the same as in your original code...]
-    // Initialize WebXR, initARJS, showCameraError, placeModelARJS, etc.
-    // Make sure all functions are defined before they're called
+    // Initialize WebXR mode
+    async function initWebXR() {
+      currentMode = 'webxr';
+      document.getElementById('mode-selector').style.display = 'none';
+      document.getElementById('stability-notice').style.display = 'block';
+      
+      try {
+        const hasPermission = await checkCameraPermissions();
+        if (!hasPermission) {
+          showCameraError();
+          return;
+        }
 
-    // Start button event listener - moved to the bottom
+        // Create Three.js scene
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        
+        renderer = new THREE.WebGLRenderer({ 
+          antialias: true, 
+          alpha: true,
+          powerPreference: "high-performance"
+        });
+        
+        if (isIOS()) {
+          renderer.setPixelRatio(1);
+        } else {
+          renderer.setPixelRatio(window.devicePixelRatio);
+        }
+        
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.xr.enabled = true;
+        document.getElementById('ar-container').appendChild(renderer.domElement);
+        
+        // Lighting
+        const light = new THREE.HemisphereLight(0xffffff, 0x444444, 2);
+        scene.add(light);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(0.5, 1, 0.25);
+        scene.add(directionalLight);
+        
+        // Reticle for surface indication
+        reticle = new THREE.Mesh(
+          new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
+          new THREE.MeshBasicMaterial({ color: 0xffffff })
+        );
+        reticle.matrixAutoUpdate = false;
+        reticle.visible = false;
+        scene.add(reticle);
+        
+        // Load model
+        const loader = new THREE.GLTFLoader();
+        try {
+          const gltf = await loader.loadAsync(config.modelUrl);
+          model = gltf.scene;
+          model.scale.set(config.modelScale, config.modelScale, config.modelScale);
+          if (config.debug) console.log("3D model loaded successfully");
+        } catch (e) {
+          console.error("Failed to load model:", e);
+          model = new THREE.Mesh(
+            new THREE.BoxGeometry(config.modelScale, config.modelScale, config.modelScale),
+            new THREE.MeshStandardMaterial({ color: 0x00ff00 })
+          );
+        }
+        
+        // Start AR session
+        try {
+          const session = await navigator.xr.requestSession('immersive-ar');
+          await renderer.xr.setSession(session);
+          
+          document.getElementById('loading').style.display = 'none';
+          
+          controller = renderer.xr.getController(0);
+          controller.addEventListener('select', onSelect);
+          scene.add(controller);
+          
+          document.getElementById('surface-indicator').style.display = 'block';
+          renderer.setAnimationLoop(render);
+        } catch (e) {
+          console.error("WebXR session failed:", e);
+          fallbackToARJS();
+        }
+      } catch (e) {
+        console.error("WebXR initialization failed:", e);
+        fallbackToARJS();
+      }
+    }
+
+    // Initialize AR.js fallback mode
+    async function initARJS() {
+      currentMode = 'arjs';
+      document.getElementById('mode-selector').style.display = 'none';
+      document.getElementById('surface-indicator').style.display = 'block';
+      document.getElementById('stability-notice').style.display = 'block';
+      
+      try {
+        const hasPermission = await checkCameraPermissions();
+        if (!hasPermission) {
+          showCameraError();
+          return;
+        }
+
+        document.getElementById('ar-container').innerHTML = `
+          <a-scene 
+            vr-mode-ui="enabled: false"
+            arjs="sourceType: webcam; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+            renderer="logarithmicDepthBuffer: true; precision: medium;"
+            embedded
+            cursor="rayOrigin: mouse; fuse: false"
+            raycaster="objects: .clickable">
+            
+            <a-camera gps-camera rotation-reader></a-camera>
+            
+            <a-entity geometry="primitive: plane; width: 100; height: 100" 
+                     material="visible: false; shader: flat"
+                     rotation="-90 0 0" class="clickable surface-plane">
+            </a-entity>
+            
+            <a-entity id="model-template" gltf-model="${config.modelUrl}" 
+                     scale="${config.modelScale} ${config.modelScale} ${config.modelScale}" 
+                     visible="false" class="placeable-model">
+            </a-entity>
+          </a-scene>
+        `;
+        
+        arjsScene = document.querySelector('a-scene');
+        
+        arjsScene.addEventListener('loaded', () => {
+          document.getElementById('loading').style.display = 'none';
+          
+          arjsScene.addEventListener('click', (e) => {
+            if (e.detail.intersection && e.detail.intersection.object.el.classList.contains('surface-plane')) {
+              placeModelARJS(e.detail.intersection.point);
+            }
+          });
+          
+          arjsScene.addEventListener('mousemove', (e) => {
+            if (e.detail.intersection && e.detail.intersection.object.el.classList.contains('surface-plane')) {
+              updateSurfaceIndicator(e.detail.intersection.point);
+            }
+          });
+        });
+      } catch (e) {
+        console.error("AR.js initialization failed:", e);
+        document.getElementById('support-message').innerHTML = 
+          '<p class="unsupported">Failed to initialize AR</p>';
+      }
+    }
+
+    // Show camera error message
+    function showCameraError() {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('camera-error').style.display = 'block';
+      document.getElementById('retry-button').addEventListener('click', () => {
+        window.location.reload();
+      });
+    }
+
+    // Place model in AR.js mode
+    function placeModelARJS(position) {
+      const template = document.getElementById('model-template');
+      if (!template) return;
+      
+      const newModel = template.cloneNode(true);
+      newModel.setAttribute('visible', 'true');
+      newModel.setAttribute('position', position);
+      newModel.setAttribute('animation', {
+        property: 'scale',
+        from: '0.01 0.01 0.01',
+        to: `${config.modelScale} ${config.modelScale} ${config.modelScale}`,
+        dur: 500,
+        easing: 'easeOutElastic'
+      });
+      
+      arjsScene.appendChild(newModel);
+    }
+
+    // Update surface indicator position
+    function updateSurfaceIndicator(position) {
+      const indicator = document.getElementById('surface-indicator');
+      const sceneEl = document.querySelector('a-scene');
+      
+      if (!indicator || !sceneEl || !position) return;
+      
+      const camera = sceneEl.camera;
+      const vector = new THREE.Vector3(position.x, position.y, position.z);
+      vector.project(camera);
+      
+      const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+      const y = -(vector.y * 0.5 - 0.5) * window.innerHeight;
+      
+      indicator.style.left = `${x - 20}px`;
+      indicator.style.top = `${y - 20}px`;
+    }
+
+    // Fallback to AR.js
+    function fallbackToARJS() {
+      if (!config.useARJS) {
+        document.getElementById('support-message').innerHTML = 
+          '<p class="unsupported">AR not supported on this device</p>';
+        return;
+      }
+      initARJS();
+    }
+
+    // WebXR render loop
+    function render(timestamp, frame) {
+      if (!frame) return;
+      
+      if (!hitTestSource && frame.session && frame.session.requestHitTestSource) {
+        frame.session.requestReferenceSpace('viewer').then((referenceSpace) => {
+          return frame.session.requestHitTestSource({ space: referenceSpace });
+        }).then((source) => {
+          hitTestSource = source;
+        });
+      }
+      
+      if (hitTestSource && frame) {
+        const hitTestResults = frame.getHitTestResults(hitTestSource);
+        
+        if (hitTestResults.length > 0) {
+          const hit = hitTestResults[0];
+          const pose = hit.getPose(renderer.xr.getReferenceSpace());
+          
+          reticle.visible = true;
+          reticle.matrix.fromArray(pose.transform.matrix);
+          
+          const position = new THREE.Vector3();
+          position.setFromMatrixPosition(reticle.matrix);
+          updateWebXRIndicator(position);
+        } else {
+          reticle.visible = false;
+          document.getElementById('surface-indicator').style.display = 'none';
+        }
+      }
+      
+      renderer.render(scene, camera);
+      TWEEN.update();
+    }
+
+    // Update WebXR indicator
+    function updateWebXRIndicator(position) {
+      const indicator = document.getElementById('surface-indicator');
+      if (!indicator) return;
+      
+      position.project(camera);
+      
+      const x = (position.x * 0.5 + 0.5) * window.innerWidth;
+      const y = -(position.y * 0.5 - 0.5) * window.innerHeight;
+      
+      indicator.style.left = `${x - 20}px`;
+      indicator.style.top = `${y - 20}px`;
+      indicator.style.display = 'block';
+    }
+
+    // Handle WebXR selection
+    function onSelect() {
+      if (reticle.visible && model) {
+        const newModel = model.clone();
+        newModel.position.setFromMatrixPosition(reticle.matrix);
+        newModel.rotation.y = Math.random() * Math.PI * 2;
+        newModel.scale.set(0.01, 0.01, 0.01);
+        scene.add(newModel);
+        
+        new TWEEN.Tween(newModel.scale)
+          .to({ x: config.modelScale, y: config.modelScale, z: config.modelScale }, 500)
+          .easing(TWEEN.Easing.Elastic.Out)
+          .start();
+      }
+    }
+
+    // Handle window resize
+    function onWindowResize() {
+      if (camera) {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+      }
+      if (renderer) {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+    }
+
+    // Start button event listener
     document.getElementById('start-button').addEventListener('click', async () => {
       const supported = await checkXRSupport();
       const isAndroid = /Android/.test(navigator.userAgent);
@@ -297,10 +575,7 @@
       }
     });
 
-    // Handle window resize
-    window.addEventListener('resize', onWindowResize);
-
-    // Check for AR support on page load
+    // Initialize on load
     window.addEventListener('load', () => {
       applyIOSViewportFix();
       
