@@ -1,81 +1,134 @@
-// Wait for A-Frame and 8th Wall components to load
-window.addEventListener('DOMContentLoaded', () => {
-  // Hide loading screen when scene is ready
-  const scene = document.querySelector('a-scene')
-  const loadingScreen = document.getElementById('loading')
-  
-  scene.addEventListener('loaded', () => {
-    setTimeout(() => {
-      loadingScreen.style.display = 'none'
-    }, 500)
-  })
+let scene, camera, renderer, controller;
+let hitTestSource = null;
+let model = null;
+let reticle = null;
+let placedObjects = [];
 
-  // Initialize surface placement
-  initSurfacePlacement()
-})
-
-function initSurfacePlacement() {
-  const scene = document.querySelector('a-scene')
+// Initialize the AR experience
+async function init() {
+  // Create Three.js scene
+  scene = new THREE.Scene();
   
-  // Get the template model
-  const modelTemplate = document.getElementById('model-template')
+  // Create camera
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
   
-  // Counter for unique model IDs
-  let modelCount = 0
+  // Create renderer with WebXR support
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.xr.enabled = true;
+  document.getElementById('ar-container').appendChild(renderer.domElement);
   
-  // Handle tap events to place models
-  scene.addEventListener('click', (evt) => {
-    // Get the position where the user tapped
-    const position = evt.detail.intersection.point
-    
-    // Create a new model instance
-    const newModel = modelTemplate.cloneNode(true)
-    newModel.id = `model-${modelCount++}`
-    newModel.object3D.position.copy(position)
-    newModel.setAttribute('visible', 'true')
-    
-    // Align the model with the surface normal
-    const normal = evt.detail.intersection.face.normal
-    newModel.object3D.lookAt(
-      position.x + normal.x,
-      position.y + normal.y,
-      position.z + normal.z
-    )
-    
-    // Add animation for better UX
-    newModel.setAttribute('animation', {
-      property: 'scale',
-      from: '0.01 0.01 0.01',
-      to: '0.2 0.2 0.2',
-      dur: 300,
-      easing: 'easeOutElastic'
-    })
-    
-    scene.appendChild(newModel)
-  })
+  // Add basic lighting
+  const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+  light.position.set(0.5, 1, 0.25);
+  scene.add(light);
   
-  // Optional: Add surface detection events
-  const surfaceVisualizer = document.querySelector('[xrextras-surface-visualizer]')
-  if (surfaceVisualizer) {
-    surfaceVisualizer.addEventListener('surfacefound', () => {
-      console.log('Surface detected!')
-    })
-    
-    surfaceVisualizer.addEventListener('surfaceupdated', () => {
-      console.log('Surface updated!')
-    })
-    
-    surfaceVisualizer.addEventListener('surfacelost', () => {
-      console.log('Surface lost!')
-    })
+  // Add reticle for placement
+  reticle = new THREE.Mesh(
+    new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0xffffff })
+  );
+  reticle.matrixAutoUpdate = false;
+  reticle.visible = false;
+  scene.add(reticle);
+  
+  // Load a simple model (replace with your own)
+  const loader = new THREE.GLTFLoader();
+  loader.load(
+    'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Box/glTF/Box.gltf',
+    (gltf) => {
+      model = gltf.scene;
+      model.scale.set(0.3, 0.3, 0.3);
+    }
+  );
+  
+  // Set up WebXR session
+  const sessionInit = { optionalFeatures: ['hit-test', 'dom-overlay'], domOverlay: { root: document.body } };
+  
+  try {
+    await renderer.xr.setSession('immersive-ar', sessionInit);
+    document.getElementById('loading').style.display = 'none';
+  } catch (e) {
+    document.getElementById('loading').innerHTML = `
+      <h1>AR Not Supported</h1>
+      <p>${e.message}</p>
+      <p>Try using Chrome on Android or Safari on iOS with ARKit support.</p>
+    `;
+    return;
   }
   
-  // Optional: Add gesture controls for placed models
-  scene.addEventListener('onefingermove', (evt) => {
-    const model = evt.detail.target
-    if (model && model.classList.contains('movable')) {
-      const touchPosition = evt.detail.position
-      model.object3D.position.set(touchPosition.x, touchPosition.y, touchPosition.z)
-    }
-  })
+  // Add controller
+  controller = renderer.xr.getController(0);
+  controller.addEventListener('select', onSelect);
+  scene.add(controller);
+  
+  // Start animation loop
+  renderer.setAnimationLoop(render);
 }
+
+// Handle tap/click to place objects
+function onSelect() {
+  if (reticle.visible && model) {
+    const newModel = model.clone();
+    newModel.position.setFromMatrixPosition(reticle.matrix);
+    
+    // Random color for demonstration
+    newModel.traverse((child) => {
+      if (child.isMesh) {
+        child.material.color.setHex(Math.random() * 0xffffff);
+      }
+    });
+    
+    scene.add(newModel);
+    placedObjects.push(newModel);
+  }
+}
+
+// Main render loop
+function render(timestamp, frame) {
+  if (frame) {
+    const referenceSpace = renderer.xr.getReferenceSpace();
+    const session = renderer.xr.getSession();
+    
+    // Get hit test results
+    if (session && frame) {
+      const hitTestResults = frame.getHitTestResults(hitTestSource);
+      
+      if (hitTestResults.length > 0) {
+        const hit = hitTestResults[0];
+        const pose = hit.getPose(referenceSpace);
+        
+        reticle.visible = true;
+        reticle.matrix.fromArray(pose.transform.matrix);
+      } else {
+        reticle.visible = false;
+      }
+    }
+    
+    // Initialize hit test source if not done yet
+    if (!hitTestSource && session && frame.session.requestHitTestSource) {
+      const space = renderer.xr.getReferenceSpace();
+      session.requestHitTestSource({ space }).then((source) => {
+        hitTestSource = source;
+      });
+    }
+  }
+  
+  renderer.render(scene, camera);
+}
+
+// Handle window resize
+function onWindowResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+// Start button event listener
+document.getElementById('start-button').addEventListener('click', () => {
+  init();
+});
+
+// Handle window resize
+window.addEventListener('resize', onWindowResize);
