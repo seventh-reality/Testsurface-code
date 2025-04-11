@@ -1,11 +1,37 @@
-let scene, camera, renderer, controller;
+let scene, camera, renderer;
 let hitTestSource = null;
+let hitTestSourceRequested = false;
 let model = null;
 let reticle = null;
-let placedObjects = [];
+let controller = null;
+let xrSession = null;
+
+// Check for WebXR support
+async function checkXRSupport() {
+  if (!navigator.xr) {
+    return false;
+  }
+  
+  try {
+    const supported = await navigator.xr.isSessionSupported('immersive-ar');
+    return supported;
+  } catch (e) {
+    console.error("XR support check failed:", e);
+    return false;
+  }
+}
 
 // Initialize the AR experience
 async function init() {
+  // Check for WebXR support
+  const supported = await checkXRSupport();
+  if (!supported) {
+    document.getElementById('support-message').innerHTML = 
+      '<p class="unsupported">WebXR AR not supported on this device/browser</p>' +
+      '<p>Try Chrome on Android or Safari on iOS 13+</p>';
+    return;
+  }
+
   // Create Three.js scene
   scene = new THREE.Scene();
   
@@ -19,12 +45,16 @@ async function init() {
   renderer.xr.enabled = true;
   document.getElementById('ar-container').appendChild(renderer.domElement);
   
-  // Add basic lighting
+  // Add lighting
   const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-  light.position.set(0.5, 1, 0.25);
   scene.add(light);
   
-  // Add reticle for placement
+  // Add directional light
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  directionalLight.position.set(0.5, 1, 0.25);
+  scene.add(directionalLight);
+  
+  // Create reticle for placement
   reticle = new THREE.Mesh(
     new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
     new THREE.MeshBasicMaterial({ color: 0xffffff })
@@ -33,38 +63,44 @@ async function init() {
   reticle.visible = false;
   scene.add(reticle);
   
-  // Load a simple model (replace with your own)
+  // Load a simple model
   const loader = new THREE.GLTFLoader();
-  loader.load(
-    'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Box/glTF/Box.gltf',
-    (gltf) => {
-      model = gltf.scene;
-      model.scale.set(0.3, 0.3, 0.3);
-    }
-  );
-  
-  // Set up WebXR session
-  const sessionInit = { optionalFeatures: ['hit-test', 'dom-overlay'], domOverlay: { root: document.body } };
-  
   try {
-    await renderer.xr.setSession('immersive-ar', sessionInit);
-    document.getElementById('loading').style.display = 'none';
+    const gltf = await loader.loadAsync('https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Box/glTF/Box.gltf');
+    model = gltf.scene;
+    model.scale.set(0.3, 0.3, 0.3);
   } catch (e) {
-    document.getElementById('loading').innerHTML = `
-      <h1>AR Not Supported</h1>
-      <p>${e.message}</p>
-      <p>Try using Chrome on Android or Safari on iOS with ARKit support.</p>
-    `;
-    return;
+    console.error("Failed to load model:", e);
+    model = new THREE.Mesh(
+      new THREE.BoxGeometry(0.3, 0.3, 0.3),
+      new THREE.MeshStandardMaterial({ color: 0x00ff00 })
+    );
   }
   
-  // Add controller
-  controller = renderer.xr.getController(0);
-  controller.addEventListener('select', onSelect);
-  scene.add(controller);
-  
-  // Start animation loop
-  renderer.setAnimationLoop(render);
+  // Start AR session
+  try {
+    const sessionInit = { 
+      optionalFeatures: ['hit-test', 'dom-overlay'],
+      domOverlay: { root: document.body }
+    };
+    
+    xrSession = await navigator.xr.requestSession('immersive-ar', sessionInit);
+    renderer.xr.setSession(xrSession);
+    
+    document.getElementById('loading').style.display = 'none';
+    
+    // Set up controller
+    controller = renderer.xr.getController(0);
+    controller.addEventListener('select', onSelect);
+    scene.add(controller);
+    
+    // Start animation loop
+    renderer.setAnimationLoop(render);
+  } catch (e) {
+    console.error("AR session failed to start:", e);
+    document.getElementById('support-message').innerHTML = 
+      `<p class="unsupported">Failed to start AR: ${e.message}</p>`;
+  }
 }
 
 // Handle tap/click to place objects
@@ -81,37 +117,37 @@ function onSelect() {
     });
     
     scene.add(newModel);
-    placedObjects.push(newModel);
   }
 }
 
 // Main render loop
 function render(timestamp, frame) {
-  if (frame) {
-    const referenceSpace = renderer.xr.getReferenceSpace();
-    const session = renderer.xr.getSession();
+  if (!frame) return;
+  
+  // Request hit test source if not done yet
+  if (!hitTestSourceRequested && frame.session) {
+    frame.session.requestReferenceSpace('viewer').then((referenceSpace) => {
+      return frame.session.requestHitTestSource({ space: referenceSpace });
+    }).then((source) => {
+      hitTestSource = source;
+      hitTestSourceRequested = true;
+    }).catch((err) => {
+      console.error("Hit test failed:", err);
+    });
+  }
+  
+  // Get hit test results
+  if (hitTestSource && frame) {
+    const hitTestResults = frame.getHitTestResults(hitTestSource);
     
-    // Get hit test results
-    if (session && frame) {
-      const hitTestResults = frame.getHitTestResults(hitTestSource);
+    if (hitTestResults.length > 0) {
+      const hit = hitTestResults[0];
+      const pose = hit.getPose(renderer.xr.getReferenceSpace());
       
-      if (hitTestResults.length > 0) {
-        const hit = hitTestResults[0];
-        const pose = hit.getPose(referenceSpace);
-        
-        reticle.visible = true;
-        reticle.matrix.fromArray(pose.transform.matrix);
-      } else {
-        reticle.visible = false;
-      }
-    }
-    
-    // Initialize hit test source if not done yet
-    if (!hitTestSource && session && frame.session.requestHitTestSource) {
-      const space = renderer.xr.getReferenceSpace();
-      session.requestHitTestSource({ space }).then((source) => {
-        hitTestSource = source;
-      });
+      reticle.visible = true;
+      reticle.matrix.fromArray(pose.transform.matrix);
+    } else {
+      reticle.visible = false;
     }
   }
   
@@ -126,9 +162,18 @@ function onWindowResize() {
 }
 
 // Start button event listener
-document.getElementById('start-button').addEventListener('click', () => {
-  init();
-});
+document.getElementById('start-button').addEventListener('click', init);
 
 // Handle window resize
 window.addEventListener('resize', onWindowResize);
+
+// Check for WebXR support on page load
+window.addEventListener('load', () => {
+  checkXRSupport().then(supported => {
+    if (!supported) {
+      document.getElementById('support-message').innerHTML = 
+        '<p class="unsupported">WebXR AR not supported on this device/browser</p>' +
+        '<p>Try Chrome on Android or Safari on iOS 13+</p>';
+    }
+  });
+});
