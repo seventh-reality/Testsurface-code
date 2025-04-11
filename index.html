@@ -3,48 +3,57 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <title>8th Wall Surface Tracking</title>
+  <title>Universal WebAR Experience</title>
+  
+  <!-- Required Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe.min.js"></script>
-  <script src="//cdn.8thwall.com/web/aframe/aframe-master.js"></script>
-  <script src="//cdn.8thwall.com/web/xrextras/xrextras.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ar.js@3.4.0/dist/aframe-ar-nft.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+  
   <style>
-    html, body {
+    body {
       margin: 0;
       padding: 0;
-      width: 100%;
-      height: 100%;
       overflow: hidden;
       -webkit-touch-callout: none;
       -webkit-user-select: none;
-    }
-    #ar-overlay {
-      position: absolute;
-      bottom: 20px;
-      left: 0;
-      right: 0;
-      text-align: center;
-      color: white;
       font-family: -apple-system, Arial, sans-serif;
-      text-shadow: 1px 1px 2px black;
-      z-index: 1000;
-      pointer-events: none;
     }
-    #loading {
-      position: absolute;
+    
+    #loading-screen {
+      position: fixed;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
-      background: rgba(0,0,0,0.8);
+      background: rgba(0,0,0,0.9);
       display: flex;
+      flex-direction: column;
       justify-content: center;
       align-items: center;
       color: white;
-      font-family: -apple-system, Arial, sans-serif;
-      z-index: 1001;
-      flex-direction: column;
+      z-index: 1000;
     }
-    #permission-button {
+    
+    #status {
+      margin-top: 20px;
+      text-align: center;
+      max-width: 80%;
+    }
+    
+    #compatibility-warning {
+      display: none;
+      background: #ff3b30;
+      color: white;
+      padding: 15px;
+      border-radius: 10px;
+      margin-top: 20px;
+      max-width: 80%;
+      text-align: center;
+    }
+    
+    #start-button {
       margin-top: 20px;
       padding: 12px 24px;
       background: #007AFF;
@@ -53,273 +62,271 @@
       border-radius: 20px;
       font-size: 16px;
       cursor: pointer;
-    }
-    #retry-button {
-      margin-top: 10px;
-      padding: 10px 20px;
-      background: #FF9500;
-      color: white;
-      border: none;
-      border-radius: 20px;
-      font-size: 14px;
-      cursor: pointer;
       display: none;
     }
-    #ios-help {
-      margin-top: 20px;
-      color: #fff;
+    
+    #ar-overlay {
+      position: fixed;
+      bottom: 20px;
+      left: 0;
+      right: 0;
       text-align: center;
-      max-width: 80%;
-      font-size: 14px;
-      display: none;
+      color: white;
+      text-shadow: 1px 1px 2px black;
+      z-index: 999;
+      pointer-events: none;
+    }
+    
+    .arjs-loader {
+      display: none !important;
     }
   </style>
 </head>
 <body>
-  <div id="loading">
-    <div id="loading-message">Initializing AR...</div>
-    <button id="permission-button" style="display:none">Allow Camera Access</button>
-    <button id="retry-button">Retry AR Session</button>
-    <div id="ios-help">
-      <p>If AR doesn't start:</p>
-      <p>1. Ensure camera access is allowed in Settings > Safari</p>
-      <p>2. Close other apps using the camera</p>
-      <p>3. Try restarting your device</p>
-    </div>
+  <div id="loading-screen">
+    <h1>Loading AR Experience</h1>
+    <div id="status">Initializing...</div>
+    <div id="compatibility-warning"></div>
+    <button id="start-button">Start AR</button>
   </div>
-  <div id="ar-overlay">Tap on detected surfaces to place objects</div>
+  
+  <div id="ar-overlay">Point your camera at a surface or marker</div>
 
+  <!-- Main AR Scene -->
   <a-scene 
-    xrweb="disableWorldTracking: false; requiredPermissions: camera"
-    xrextras-almost-there
-    xrextras-runtime-error
-    xrextras-loading
-    renderer="colorManagement: true;"
-    background="color: #FAFAFA"
-    xrextras-gesture-detector
-    xrextras-surface-placement>
-
-    <!-- Camera setup -->
-    <a-entity camera></a-entity>
+    vr-mode-ui="enabled: false"
+    renderer="colorManagement: true; antialias: true;"
+    embedded
+    arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;"
+    gesture-detector
+    id="scene">
+    
+    <!-- Camera -->
+    <a-camera gps-camera rotation-reader></a-camera>
     
     <!-- Lighting -->
-    <a-entity light="type: ambient; color: #FFF; intensity: 0.5"></a-entity>
-    <a-entity light="type: directional; color: #FFF; intensity: 0.5" position="-1 1 1"></a-entity>
+    <a-light type="ambient" color="#FFF" intensity="0.5"></a-light>
+    <a-light type="directional" color="#FFF" intensity="0.5" position="-1 1 1"></a-light>
     
-    <!-- Surface visualization (optional) -->
-    <a-entity xrextras-surface-visualizer></a-entity>
+    <!-- Marker-based AR content (for AR.js) -->
+    <a-marker preset="hiro">
+      <a-box position="0 0.5 0" material="color: red"></a-box>
+    </a-marker>
     
-    <!-- Example 3D model to place (can be replaced with your own) -->
-    <a-entity id="model-template" gltf-model="https://cdn.8thwall.com/web/assets/box/box.glb" scale="0.2 0.2 0.2" visible="false"></a-entity>
+    <!-- WebXR/WebRTC content -->
+    <a-entity id="webar-content" visible="false">
+      <a-box position="0 0 -1" scale="0.5 0.5 0.5" color="blue"></a-box>
+    </a-entity>
+    
+    <!-- Fallback content for non-AR devices -->
+    <a-entity id="fallback-content" visible="false">
+      <a-box position="0 0 -2" scale="0.5 0.5 0.5" color="green"></a-box>
+    </a-entity>
   </a-scene>
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-      const loadingScreen = document.getElementById('loading');
-      const loadingMessage = document.getElementById('loading-message');
-      const permissionButton = document.getElementById('permission-button');
-      const retryButton = document.getElementById('retry-button');
-      const iosHelp = document.getElementById('ios-help');
-      const scene = document.querySelector('a-scene');
+      const loadingScreen = document.getElementById('loading-screen');
+      const statusElement = document.getElementById('status');
+      const warningElement = document.getElementById('compatibility-warning');
+      const startButton = document.getElementById('start-button');
+      const scene = document.getElementById('scene');
+      const webarContent = document.getElementById('webar-content');
+      const fallbackContent = document.getElementById('fallback-content');
       
-      // Enhanced iOS detection
-      const isIOS = () => {
-        return /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-               (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-      };
+      // Detect device capabilities
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      const isAndroid = /Android/.test(navigator.userAgent);
+      const isMobile = isIOS || isAndroid;
       
-      // Check for 8th Wall compatibility
-      const is8thWallSupported = () => {
-        return window.XR8 && XR8.XrController;
-      };
+      // Check for WebXR support
+      const hasWebXR = 'xr' in navigator && 'isSessionSupported' in navigator.xr;
       
-      // Track AR state
-      let arStarted = false;
-      let permissionRequested = false;
+      // Check for WebRTC support
+      const hasWebRTC = !!navigator.mediaDevices && !!navigator.mediaDevices.getUserMedia;
       
-      // Initialize AR
-      const initializeAR = () => {
-        if (!is8thWallSupported()) {
-          loadingMessage.textContent = 'AR not supported in this browser';
-          retryButton.style.display = 'none';
-          if (isIOS()) {
-            iosHelp.style.display = 'block';
-          }
-          return;
-        }
+      // Check for AR.js support
+      const hasARJS = !!window.ARjs;
+      
+      // Main initialization function
+      const initializeAR = async () => {
+        statusElement.textContent = "Checking device capabilities...";
         
-        // Check for camera permissions
-        if (navigator.permissions && navigator.permissions.query) {
-          navigator.permissions.query({name: 'camera'}).then(permissionStatus => {
-            permissionStatus.onchange = () => {
-              if (permissionStatus.state === 'granted' && !arStarted) {
-                window.location.reload();
-              }
-            };
-            
-            if (permissionStatus.state !== 'granted' && isIOS()) {
-              showPermissionUI();
-            }
-          }).catch(() => {
-            // Permissions API not supported, proceed normally
-          });
-        }
-        
-        // Monitor AR state
-        monitorARState();
-      };
-      
-      // Monitor AR session state
-      const monitorARState = () => {
-        let checks = 0;
-        const maxChecks = 20; // 10 seconds total (500ms * 20)
-        
-        const checkInterval = setInterval(() => {
-          checks++;
-          
-          if (scene.hasAttribute('ar-mode')) {
-            // AR successfully started
-            arStarted = true;
-            clearInterval(checkInterval);
-            loadingScreen.style.display = 'none';
+        try {
+          // First try WebXR (modern devices)
+          if (hasWebXR) {
+            statusElement.textContent = "Attempting WebXR...";
+            await initializeWebXR();
             return;
           }
           
-          if (checks >= maxChecks) {
-            // AR failed to start
-            clearInterval(checkInterval);
-            handleARStartFailure();
+          // Then try AR.js (older devices)
+          if (hasARJS && hasWebRTC) {
+            statusElement.textContent = "Attempting AR.js marker-based AR...";
+            await initializeARJS();
+            return;
           }
-        }, 500);
-      };
-      
-      // Handle AR start failure
-      const handleARStartFailure = () => {
-        if (isIOS()) {
-          loadingMessage.textContent = 'AR failed to start';
-          permissionButton.style.display = 'block';
-          retryButton.style.display = 'block';
-          iosHelp.style.display = 'block';
           
-          // Additional iOS-specific checks
-          if (window.XR8 && XR8.XrController) {
-            const arStatus = XR8.XrController.getSessionStatus();
-            if (arStatus && arStatus.error) {
-              loadingMessage.textContent = `AR Error: ${arStatus.error}`;
-            }
+          // Fallback to simple WebRTC camera view
+          if (hasWebRTC) {
+            statusElement.textContent = "Using basic camera view...";
+            await initializeWebRTC();
+            return;
           }
-        } else {
-          loadingMessage.textContent = 'AR failed to start. Please try again.';
-          retryButton.style.display = 'block';
+          
+          // Final fallback
+          showFallback();
+        } catch (error) {
+          console.error("AR initialization failed:", error);
+          handleError(error);
         }
       };
       
-      // Show permission UI for iOS
-      const showPermissionUI = () => {
-        permissionRequested = true;
-        permissionButton.style.display = 'block';
-        iosHelp.style.display = 'block';
-        loadingMessage.textContent = 'Camera access is required for AR';
+      // WebXR Initialization
+      const initializeWebXR = async () => {
+        try {
+          const supported = await navigator.xr.isSessionSupported('immersive-ar');
+          if (supported) {
+            statusElement.textContent = "WebXR supported, starting session...";
+            
+            // Configure A-Frame for WebXR
+            scene.setAttribute('webxr', 'optionalFeatures: hit-test; requiredFeatures: local-floor');
+            
+            // Show WebXR content
+            webarContent.setAttribute('visible', 'true');
+            
+            // Wait for scene to load
+            scene.addEventListener('loaded', () => {
+              setTimeout(() => {
+                loadingScreen.style.display = 'none';
+                statusElement.textContent = "WebXR session started";
+              }, 1000);
+            });
+            
+            return;
+          }
+          throw new Error("WebXR AR not supported");
+        } catch (error) {
+          throw error;
+        }
       };
       
-      // Request camera permission (iOS-specific)
-      const requestCameraPermission = () => {
-        // iOS requires a user gesture to request camera access
-        const tempVideo = document.createElement('video');
-        tempVideo.setAttribute('playsinline', '');
-        tempVideo.setAttribute('webkit-playsinline', '');
-        tempVideo.width = 1;
-        tempVideo.height = 1;
-        document.body.appendChild(tempVideo);
-        
-        navigator.mediaDevices.getUserMedia({ video: true })
-          .then(stream => {
-            // Clean up
-            stream.getTracks().forEach(track => track.stop());
-            document.body.removeChild(tempVideo);
-            
-            // Configure 8th Wall controller
-            if (window.XR8 && XR8.XrController) {
-              XR8.XrController.configure({ enableWorldTracking: true });
-              XR8.XrController.updateCameraProjectionMatrix();
-            }
-            
-            // Reload the page
-            window.location.reload();
-          })
-          .catch(err => {
-            console.error('Camera permission denied:', err);
-            document.body.removeChild(tempVideo);
-            loadingMessage.textContent = 'Please enable camera access in Settings';
-            permissionButton.style.display = 'none';
-            retryButton.style.display = 'block';
+      // AR.js Initialization
+      const initializeARJS = () => {
+        return new Promise((resolve) => {
+          // AR.js is already initialized with the scene
+          scene.addEventListener('arjs-nft-loaded', () => {
+            statusElement.textContent = "AR.js ready";
+            resolve();
           });
+          
+          scene.addEventListener('loaded', () => {
+            setTimeout(() => {
+              loadingScreen.style.display = 'none';
+              statusElement.textContent = "AR.js session started";
+            }, 1000);
+          });
+        });
       };
       
-      // Handle scene loaded event
-      scene.addEventListener('loaded', () => {
-        initializeAR();
-      });
+      // WebRTC Initialization (fallback)
+      const initializeWebRTC = () => {
+        return new Promise((resolve) => {
+          // Just show the camera feed without AR
+          scene.setAttribute('arjs', 'sourceType: webcam; debugUIEnabled: false');
+          fallbackContent.setAttribute('visible', 'true');
+          
+          scene.addEventListener('loaded', () => {
+            setTimeout(() => {
+              loadingScreen.style.display = 'none';
+              statusElement.textContent = "Camera view started";
+            }, 1000);
+          });
+          
+          resolve();
+        });
+      };
       
-      // Handle permission button click
-      permissionButton.addEventListener('click', () => {
-        requestCameraPermission();
-      });
-      
-      // Handle retry button click
-      retryButton.addEventListener('click', () => {
-        window.location.reload();
-      });
-      
-      // Initialize surface placement
-      initSurfacePlacement();
-    });
-    
-    function initSurfacePlacement() {
-      const scene = document.querySelector('a-scene');
-      const modelTemplate = document.getElementById('model-template');
-      let modelCount = 0;
-      
-      // Handle tap events to place models
-      scene.addEventListener('click', (evt) => {
-        if (!evt.detail.intersection) return;
+      // Show simple fallback content
+      const showFallback = () => {
+        warningElement.textContent = "AR features not available on this device. Showing 3D content.";
+        warningElement.style.display = 'block';
+        fallbackContent.setAttribute('visible', 'true');
         
-        const position = evt.detail.intersection.point;
-        const newModel = modelTemplate.cloneNode(true);
-        newModel.id = `model-${modelCount++}`;
-        newModel.object3D.position.copy(position);
-        newModel.setAttribute('visible', 'true');
+        scene.addEventListener('loaded', () => {
+          setTimeout(() => {
+            loadingScreen.style.display = 'none';
+          }, 1000);
+        });
+      };
+      
+      // Handle errors
+      const handleError = (error) => {
+        console.error("AR Error:", error);
+        warningElement.textContent = `Error: ${error.message || 'AR initialization failed'}`;
+        warningElement.style.display = 'block';
         
-        // Align the model with the surface normal
-        if (evt.detail.intersection.face && evt.detail.intersection.face.normal) {
-          const normal = evt.detail.intersection.face.normal;
-          newModel.object3D.lookAt(
-            position.x + normal.x,
-            position.y + normal.y,
-            position.z + normal.z
-          );
+        // Show fallback options
+        if (hasWebRTC) {
+          startButton.style.display = 'block';
+          startButton.textContent = "Try Basic Camera View";
+          startButton.onclick = initializeWebRTC;
+        } else {
+          showFallback();
         }
-        
-        // Add animation for better UX
-        newModel.setAttribute('animation', {
-          property: 'scale',
-          from: '0.01 0.01 0.01',
-          to: '0.2 0.2 0.2',
-          dur: 300,
-          easing: 'easeOutElastic'
-        });
-        
-        scene.appendChild(newModel);
-      });
+      };
       
-      // Surface detection events
-      const surfaceVisualizer = document.querySelector('[xrextras-surface-visualizer]');
-      if (surfaceVisualizer) {
-        surfaceVisualizer.addEventListener('surfacefound', () => {
-          console.log('Surface detected!');
-        });
+      // iOS-specific permission handling
+      const handleIOSPermissions = () => {
+        if (!isIOS) return;
+        
+        statusElement.textContent = "iOS device detected, checking permissions...";
+        
+        // iOS requires user interaction for camera access
+        startButton.style.display = 'block';
+        startButton.textContent = "Allow Camera Access";
+        startButton.onclick = () => {
+          statusElement.textContent = "Requesting camera permission...";
+          
+          // Create temporary video element to trigger permission
+          const tempVideo = document.createElement('video');
+          tempVideo.setAttribute('playsinline', '');
+          tempVideo.setAttribute('webkit-playsinline', '');
+          tempVideo.width = 1;
+          tempVideo.height = 1;
+          document.body.appendChild(tempVideo);
+          
+          navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+              // Clean up
+              stream.getTracks().forEach(track => track.stop());
+              document.body.removeChild(tempVideo);
+              
+              // Continue with AR initialization
+              startButton.style.display = 'none';
+              initializeAR();
+            })
+            .catch(err => {
+              console.error("Camera permission denied:", err);
+              document.body.removeChild(tempVideo);
+              statusElement.textContent = "Please enable camera access in Settings";
+              warningElement.textContent = "Camera access is required for AR features";
+              warningElement.style.display = 'block';
+            });
+        };
+      };
+      
+      // Start initialization
+      if (isMobile) {
+        handleIOSPermissions();
       }
-    }
+      
+      // For non-iOS devices or if iOS permissions are already granted
+      if (!isIOS || (isIOS && !startButton.style.display !== 'none')) {
+        initializeAR();
+      }
+    });
   </script>
 </body>
 </html>
