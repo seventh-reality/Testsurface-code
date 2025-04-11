@@ -65,13 +65,27 @@
       cursor: pointer;
       display: none;
     }
+    #ios-help {
+      margin-top: 20px;
+      color: #fff;
+      text-align: center;
+      max-width: 80%;
+      font-size: 14px;
+      display: none;
+    }
   </style>
 </head>
 <body>
   <div id="loading">
-    <div>Initializing AR...</div>
+    <div id="loading-message">Initializing AR...</div>
     <button id="permission-button" style="display:none">Allow Camera Access</button>
     <button id="retry-button">Retry AR Session</button>
+    <div id="ios-help">
+      <p>If AR doesn't start:</p>
+      <p>1. Ensure camera access is allowed in Settings > Safari</p>
+      <p>2. Close other apps using the camera</p>
+      <p>3. Try restarting your device</p>
+    </div>
   </div>
   <div id="ar-overlay">Tap on detected surfaces to place objects</div>
 
@@ -100,60 +114,162 @@
   </a-scene>
 
   <script>
-    // Enhanced iOS initialization
     document.addEventListener('DOMContentLoaded', () => {
       const loadingScreen = document.getElementById('loading');
+      const loadingMessage = document.getElementById('loading-message');
       const permissionButton = document.getElementById('permission-button');
       const retryButton = document.getElementById('retry-button');
+      const iosHelp = document.getElementById('ios-help');
       const scene = document.querySelector('a-scene');
       
-      // iOS-specific checks
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-                   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      // Enhanced iOS detection
+      const isIOS = () => {
+        return /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+               (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      };
       
-      // Handle scene loaded event
-      scene.addEventListener('loaded', () => {
-        // Check if we're on iOS and camera isn't working
-        if (isIOS && !scene.hasAttribute('ar-mode')) {
-          permissionButton.style.display = 'block';
-          loadingScreen.querySelector('div').textContent = 'Camera access is required for AR';
-        } else {
-          setTimeout(() => {
-            loadingScreen.style.display = 'none';
-          }, 1000);
+      // Check for 8th Wall compatibility
+      const is8thWallSupported = () => {
+        return window.XR8 && XR8.XrController;
+      };
+      
+      // Track AR state
+      let arStarted = false;
+      let permissionRequested = false;
+      
+      // Initialize AR
+      const initializeAR = () => {
+        if (!is8thWallSupported()) {
+          loadingMessage.textContent = 'AR not supported in this browser';
+          retryButton.style.display = 'none';
+          if (isIOS()) {
+            iosHelp.style.display = 'block';
+          }
+          return;
         }
-      });
+        
+        // Check for camera permissions
+        if (navigator.permissions && navigator.permissions.query) {
+          navigator.permissions.query({name: 'camera'}).then(permissionStatus => {
+            permissionStatus.onchange = () => {
+              if (permissionStatus.state === 'granted' && !arStarted) {
+                window.location.reload();
+              }
+            };
+            
+            if (permissionStatus.state !== 'granted' && isIOS()) {
+              showPermissionUI();
+            }
+          }).catch(() => {
+            // Permissions API not supported, proceed normally
+          });
+        }
+        
+        // Monitor AR state
+        monitorARState();
+      };
       
-      // Handle permission button click
-      permissionButton.addEventListener('click', () => {
-        // Trigger camera permission request
+      // Monitor AR session state
+      const monitorARState = () => {
+        let checks = 0;
+        const maxChecks = 20; // 10 seconds total (500ms * 20)
+        
+        const checkInterval = setInterval(() => {
+          checks++;
+          
+          if (scene.hasAttribute('ar-mode')) {
+            // AR successfully started
+            arStarted = true;
+            clearInterval(checkInterval);
+            loadingScreen.style.display = 'none';
+            return;
+          }
+          
+          if (checks >= maxChecks) {
+            // AR failed to start
+            clearInterval(checkInterval);
+            handleARStartFailure();
+          }
+        }, 500);
+      };
+      
+      // Handle AR start failure
+      const handleARStartFailure = () => {
+        if (isIOS()) {
+          loadingMessage.textContent = 'AR failed to start';
+          permissionButton.style.display = 'block';
+          retryButton.style.display = 'block';
+          iosHelp.style.display = 'block';
+          
+          // Additional iOS-specific checks
+          if (window.XR8 && XR8.XrController) {
+            const arStatus = XR8.XrController.getSessionStatus();
+            if (arStatus && arStatus.error) {
+              loadingMessage.textContent = `AR Error: ${arStatus.error}`;
+            }
+          }
+        } else {
+          loadingMessage.textContent = 'AR failed to start. Please try again.';
+          retryButton.style.display = 'block';
+        }
+      };
+      
+      // Show permission UI for iOS
+      const showPermissionUI = () => {
+        permissionRequested = true;
+        permissionButton.style.display = 'block';
+        iosHelp.style.display = 'block';
+        loadingMessage.textContent = 'Camera access is required for AR';
+      };
+      
+      // Request camera permission (iOS-specific)
+      const requestCameraPermission = () => {
+        // iOS requires a user gesture to request camera access
+        const tempVideo = document.createElement('video');
+        tempVideo.setAttribute('playsinline', '');
+        tempVideo.setAttribute('webkit-playsinline', '');
+        tempVideo.width = 1;
+        tempVideo.height = 1;
+        document.body.appendChild(tempVideo);
+        
         navigator.mediaDevices.getUserMedia({ video: true })
-          .then(() => {
+          .then(stream => {
+            // Clean up
+            stream.getTracks().forEach(track => track.stop());
+            document.body.removeChild(tempVideo);
+            
+            // Configure 8th Wall controller
+            if (window.XR8 && XR8.XrController) {
+              XR8.XrController.configure({ enableWorldTracking: true });
+              XR8.XrController.updateCameraProjectionMatrix();
+            }
+            
+            // Reload the page
             window.location.reload();
           })
           .catch(err => {
             console.error('Camera permission denied:', err);
-            loadingScreen.querySelector('div').textContent = 'Please enable camera access in Settings';
+            document.body.removeChild(tempVideo);
+            loadingMessage.textContent = 'Please enable camera access in Settings';
             permissionButton.style.display = 'none';
             retryButton.style.display = 'block';
           });
+      };
+      
+      // Handle scene loaded event
+      scene.addEventListener('loaded', () => {
+        initializeAR();
+      });
+      
+      // Handle permission button click
+      permissionButton.addEventListener('click', () => {
+        requestCameraPermission();
       });
       
       // Handle retry button click
       retryButton.addEventListener('click', () => {
         window.location.reload();
       });
-      
-      // iOS-specific timeout for AR initialization
-      if (isIOS) {
-        setTimeout(() => {
-          if (loadingScreen.style.display !== 'none' && !scene.hasAttribute('ar-mode')) {
-            permissionButton.style.display = 'block';
-            retryButton.style.display = 'block';
-            loadingScreen.querySelector('div').textContent = 'Having trouble starting AR?';
-          }
-        }, 8000);
-      }
       
       // Initialize surface placement
       initSurfacePlacement();
