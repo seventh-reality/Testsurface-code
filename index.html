@@ -177,7 +177,7 @@
   
   <div id="ar-container"></div>
 
-   <script>
+  <script>
     // Configuration
     const config = {
       useWebXR: true,
@@ -200,6 +200,7 @@
     let lastPosition = new THREE.Vector3();
     let isTrackingStable = false;
     let lastStableTime = 0;
+    let xrReferenceSpace = null;
 
     // Check for iOS
     const isIOS = () => {
@@ -327,6 +328,11 @@
         // Start AR session
         try {
           const session = await navigator.xr.requestSession('immersive-ar');
+          session.addEventListener('end', onSessionEnd);
+          
+          // Create a reference space with gravity alignment
+          xrReferenceSpace = await session.requestReferenceSpace('local');
+          
           await renderer.xr.setSession(session);
           
           document.getElementById('loading').style.display = 'none';
@@ -334,6 +340,15 @@
           controller = renderer.xr.getController(0);
           controller.addEventListener('select', onSelect);
           scene.add(controller);
+          
+          // Request hit test source for world tracking
+          session.requestHitTestSource({ space: xrReferenceSpace })
+            .then((source) => {
+              hitTestSource = source;
+            })
+            .catch((err) => {
+              console.error("Failed to get hit test source:", err);
+            });
           
           document.getElementById('surface-indicator').style.display = 'block';
           renderer.setAnimationLoop(render);
@@ -408,6 +423,22 @@
       }
     }
 
+    // Handle session end
+    function onSessionEnd() {
+      if (hitTestSource) {
+        hitTestSource.cancel();
+        hitTestSource = null;
+      }
+      
+      if (renderer.xr.isPresenting) {
+        renderer.xr.getSession().end();
+      }
+      
+      document.getElementById('loading').style.display = 'flex';
+      document.getElementById('support-message').innerHTML = 
+        '<p>AR session ended. Refresh to start again.</p>';
+    }
+
     // Show camera error message
     function showCameraError() {
       document.getElementById('loading').style.display = 'none';
@@ -468,27 +499,21 @@
     function render(timestamp, frame) {
       if (!frame) return;
       
-      if (!hitTestSource && frame.session && frame.session.requestHitTestSource) {
-        frame.session.requestReferenceSpace('viewer').then((referenceSpace) => {
-          return frame.session.requestHitTestSource({ space: referenceSpace });
-        }).then((source) => {
-          hitTestSource = source;
-        });
-      }
-      
       if (hitTestSource && frame) {
         const hitTestResults = frame.getHitTestResults(hitTestSource);
         
         if (hitTestResults.length > 0) {
           const hit = hitTestResults[0];
-          const pose = hit.getPose(renderer.xr.getReferenceSpace());
+          const pose = hit.getPose(xrReferenceSpace);
           
-          reticle.visible = true;
-          reticle.matrix.fromArray(pose.transform.matrix);
-          
-          const position = new THREE.Vector3();
-          position.setFromMatrixPosition(reticle.matrix);
-          updateWebXRIndicator(position);
+          if (pose) {
+            reticle.visible = true;
+            reticle.matrix.fromArray(pose.transform.matrix);
+            
+            const position = new THREE.Vector3();
+            position.setFromMatrixPosition(reticle.matrix);
+            updateWebXRIndicator(position);
+          }
         } else {
           reticle.visible = false;
           document.getElementById('surface-indicator').style.display = 'none';
@@ -578,6 +603,7 @@
     // Initialize on load
     window.addEventListener('load', () => {
       applyIOSViewportFix();
+      window.addEventListener('resize', onWindowResize);
       
       if (isIOS()) {
         document.getElementById('support-message').innerHTML = 
