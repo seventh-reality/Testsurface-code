@@ -510,15 +510,23 @@
     // Start button event listener
     document.getElementById('start-button').addEventListener('click', async () => {
       const supported = await checkXRSupport();
-      
-      // Always show mode selector on Android
       const isAndroid = /Android/.test(navigator.userAgent);
+      
+      // Disable the button to prevent multiple clicks
+      document.getElementById('start-button').disabled = true;
       
       if ((supported && config.useWebXR) || isAndroid) {
         if (config.useARJS) {
+          // Show mode selector but keep the loading screen visible
           document.getElementById('mode-selector').style.display = 'block';
-          document.getElementById('webxr-btn').addEventListener('click', initWebXR);
-          document.getElementById('arjs-btn').addEventListener('click', initARJS);
+          document.getElementById('webxr-btn').addEventListener('click', () => {
+            document.getElementById('loading').style.display = 'flex'; // Ensure loading screen stays visible
+            initWebXR();
+          });
+          document.getElementById('arjs-btn').addEventListener('click', () => {
+            document.getElementById('loading').style.display = 'flex'; // Ensure loading screen stays visible
+            initARJS();
+          });
         } else {
           initWebXR();
         }
