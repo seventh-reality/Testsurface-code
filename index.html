@@ -54,12 +54,24 @@
       font-size: 16px;
       cursor: pointer;
     }
+    #retry-button {
+      margin-top: 10px;
+      padding: 10px 20px;
+      background: #FF9500;
+      color: white;
+      border: none;
+      border-radius: 20px;
+      font-size: 14px;
+      cursor: pointer;
+      display: none;
+    }
   </style>
 </head>
 <body>
   <div id="loading">
     <div>Initializing AR...</div>
     <button id="permission-button" style="display:none">Allow Camera Access</button>
+    <button id="retry-button">Retry AR Session</button>
   </div>
   <div id="ar-overlay">Tap on detected surfaces to place objects</div>
 
@@ -92,6 +104,7 @@
     document.addEventListener('DOMContentLoaded', () => {
       const loadingScreen = document.getElementById('loading');
       const permissionButton = document.getElementById('permission-button');
+      const retryButton = document.getElementById('retry-button');
       const scene = document.querySelector('a-scene');
       
       // iOS-specific checks
@@ -101,7 +114,7 @@
       // Handle scene loaded event
       scene.addEventListener('loaded', () => {
         // Check if we're on iOS and camera isn't working
-        if (isIOS && !scene.is('ar-mode')) {
+        if (isIOS && !scene.hasAttribute('ar-mode')) {
           permissionButton.style.display = 'block';
           loadingScreen.querySelector('div').textContent = 'Camera access is required for AR';
         } else {
@@ -121,14 +134,22 @@
           .catch(err => {
             console.error('Camera permission denied:', err);
             loadingScreen.querySelector('div').textContent = 'Please enable camera access in Settings';
+            permissionButton.style.display = 'none';
+            retryButton.style.display = 'block';
           });
+      });
+      
+      // Handle retry button click
+      retryButton.addEventListener('click', () => {
+        window.location.reload();
       });
       
       // iOS-specific timeout for AR initialization
       if (isIOS) {
         setTimeout(() => {
-          if (loadingScreen.style.display !== 'none') {
+          if (loadingScreen.style.display !== 'none' && !scene.hasAttribute('ar-mode')) {
             permissionButton.style.display = 'block';
+            retryButton.style.display = 'block';
             loadingScreen.querySelector('div').textContent = 'Having trouble starting AR?';
           }
         }, 8000);
@@ -154,12 +175,14 @@
         newModel.setAttribute('visible', 'true');
         
         // Align the model with the surface normal
-        const normal = evt.detail.intersection.face.normal;
-        newModel.object3D.lookAt(
-          position.x + normal.x,
-          position.y + normal.y,
-          position.z + normal.z
-        );
+        if (evt.detail.intersection.face && evt.detail.intersection.face.normal) {
+          const normal = evt.detail.intersection.face.normal;
+          newModel.object3D.lookAt(
+            position.x + normal.x,
+            position.y + normal.y,
+            position.z + normal.z
+          );
+        }
         
         // Add animation for better UX
         newModel.setAttribute('animation', {
