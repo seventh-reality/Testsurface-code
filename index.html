@@ -80,7 +80,7 @@
             auto-rotate
             shadow-intensity="1"
             style="width: 100%; height: 100%;"
-            src="https://cdn.glitch.global/7c4d6b5f-1f3d-4e9b-8d3f-3f6f9f9f9f9f/chair.glb"
+            src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
             alt="3D model"
             ar-scale="fixed">
         </model-viewer>
@@ -99,8 +99,8 @@
         let arSession = null;
         let model = null;
         
-        // Model URL - replace with your own model
-        const modelUrl = 'https://cdn.glitch.global/7c4d6b5f-1f3d-4e9b-8d3f-3f6f9f9f9f9f/chair.glb';
+        // Model URL - using a publicly accessible demo model
+        const modelUrl = 'https://modelviewer.dev/shared-assets/models/Astronaut.glb';
         
         // DOM elements
         const arContainer = document.getElementById('ar-container');
@@ -237,7 +237,7 @@
         
         modelViewer.addEventListener('error', (event) => {
             console.error('Model Viewer error:', event.detail);
-            loadingElement.textContent = 'Error: ' + event.detail;
+            loadingElement.textContent = 'Error: ' + (event.detail.message || 'Failed to load model');
             loadingElement.style.display = 'block';
         });
     </script>
