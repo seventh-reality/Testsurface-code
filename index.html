@@ -21,7 +21,9 @@
       overflow: hidden;
       -webkit-touch-callout: none;
       -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
       font-family: -apple-system, Arial, sans-serif;
+      touch-action: none;
     }
     #ar-container {
       position: fixed;
@@ -55,6 +57,10 @@
       text-shadow: 1px 1px 2px black;
       z-index: 10;
       pointer-events: none;
+      padding: 10px;
+      background: rgba(0,0,0,0.5);
+      border-radius: 20px;
+      margin: 0 20px;
     }
     #start-button {
       padding: 12px 24px;
@@ -69,33 +75,66 @@
     .unsupported {
       color: #ff4444;
       margin-top: 20px;
+      text-align: center;
+      max-width: 80%;
     }
     #surface-indicator {
       position: fixed;
-      width: 40px;
-      height: 40px;
-      border: 2px solid rgba(255,255,255,0.8);
+      width: 60px;
+      height: 60px;
+      border: 3px solid rgba(255,255,255,0.8);
       border-radius: 50%;
       pointer-events: none;
       z-index: 20;
       display: none;
+      transform: translate(-50%, -50%);
+      animation: pulse 1.5s infinite;
     }
     #gesture-help {
       position: fixed;
-      bottom: 60px;
+      bottom: 80px;
       left: 0;
       right: 0;
       text-align: center;
       color: white;
-      background: rgba(0,0,0,0.5);
+      background: rgba(0,0,0,0.7);
       padding: 10px;
+      border-radius: 20px;
       z-index: 15;
       display: none;
+      margin: 0 20px;
     }
     canvas {
       display: block;
       width: 100% !important;
       height: 100% !important;
+    }
+    @keyframes pulse {
+      0% { transform: translate(-50%, -50%) scale(0.9); opacity: 0.7; }
+      50% { transform: translate(-50%, -50%) scale(1.1); opacity: 1; }
+      100% { transform: translate(-50%, -50%) scale(0.9); opacity: 0.7; }
+    }
+    #error-message {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: rgba(255,0,0,0.7);
+      color: white;
+      padding: 10px;
+      text-align: center;
+      z-index: 200;
+      display: none;
+    }
+    #reset-button {
+      padding: 8px 16px;
+      background: #2196F3;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+      margin-top: 10px;
     }
   </style>
 </head>
@@ -107,8 +146,9 @@
     <button id="start-button">Start AR Experience</button>
   </div>
 
-  <div id="info">Move device to detect surfaces. Tap to place the model.</div>
-  <div id="gesture-help">Use one finger to move, two fingers to rotate/scale</div>
+  <div id="error-message"></div>
+  <div id="info">Move your device slowly to detect surfaces. Tap to place the model.</div>
+  <div id="gesture-help">Touch and drag to move • Pinch to scale • Two-finger rotate to turn</div>
   <div id="surface-indicator"></div>
   
   <div id="ar-container"></div>
@@ -119,8 +159,8 @@
       modelUrl: 'all.glb',
       debug: true,
       initialScale: 1.0,
-      minScale: 0.1,
-      maxScale: 2.0,
+      minScale: 0.3,
+      maxScale: 3.0,
       stabilityThreshold: 0.05,
       modelUnits: 'meters',
       reticle: {
@@ -138,6 +178,10 @@
         gridDivisions: 8,
         gridColor: 0xffffff,
         gridOpacity: 0.3
+      },
+      ios: {
+        useARQuickLook: false, // Set to true if you want to offer AR Quick Look as an option
+        quickLookUrl: 'your-model.usdz' // Required if useARQuickLook is true
       }
     };
 
@@ -145,47 +189,90 @@
     let scene, camera, renderer;
     let model = null;
     let reticle = null;
-    let reticlePulse = 1;
-    let reticlePulseDirection = 1;
     let arjsScene = null;
     let isModelPlaced = false;
     let currentScale = config.initialScale;
-    let lastPosition = new THREE.Vector3();
     let hammerManager = null;
-    let initialDistance = 0;
-    let initialScale = 1;
-    let initialAngle = 0;
-    let initialRotation = 0;
-    let modelBoundingBox = new THREE.Box3();
+    let isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    let isAndroid = /Android/.test(navigator.userAgent);
+    let arSession = null;
 
-    // Check for WebXR support
+    // Enhanced WebXR support check
     async function checkXRSupport() {
-      if (!navigator.xr) return false;
+      if (!navigator.xr) {
+        return false;
+      }
+      
       try {
-        return await navigator.xr.isSessionSupported('immersive-ar');
+        // Check for both immersive-ar and inline support
+        const isImmersiveSupported = await navigator.xr.isSessionSupported('immersive-ar');
+        const isInlineSupported = await navigator.xr.isSessionSupported('inline');
+        
+        if (config.debug) {
+          console.log(`WebXR Support - Immersive AR: ${isImmersiveSupported}, Inline: ${isInlineSupported}`);
+        }
+        
+        return isImmersiveSupported;
       } catch (e) {
         console.error("XR support check failed:", e);
         return false;
       }
     }
 
-    // Check camera permissions
+    // Check camera permissions with better error handling
     async function checkCameraPermissions() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        stream.getTracks().forEach(track => track.stop());
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("Camera API not available");
+        }
+        
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          } 
+        });
+        
+        // Stop all tracks to release camera
+        stream.getTracks().forEach(track => {
+          track.stop();
+        });
+        
         return true;
       } catch (e) {
-        console.error("Camera permission denied:", e);
+        console.error("Camera permission error:", e);
+        showError(`Camera access required: ${e.message}`);
         return false;
       }
     }
 
-    // Create enhanced reticle mesh
+    // Show error message
+    function showError(message, fatal = false) {
+      const errorEl = document.getElementById('error-message');
+      errorEl.textContent = message;
+      errorEl.style.display = 'block';
+      
+      if (fatal) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('support-message').innerHTML = 
+          `<p class="unsupported">${message}</p>`;
+      }
+      
+      // Hide error after 5 seconds if not fatal
+      if (!fatal) {
+        setTimeout(() => {
+          errorEl.style.display = 'none';
+        }, 5000);
+      }
+    }
+
+    // Create enhanced reticle with better visibility
     function createReticle() {
       const reticleGroup = new THREE.Group();
       
-      // Outer ring
+      // Outer ring with pulse animation
       const ringGeometry = new THREE.RingGeometry(
         config.reticle.ringRadius, 
         config.reticle.ringRadius + config.reticle.ringThickness, 
@@ -195,7 +282,8 @@
       const ringMaterial = new THREE.MeshBasicMaterial({
         color: config.reticle.color,
         transparent: true,
-        opacity: config.reticle.opacity
+        opacity: config.reticle.opacity,
+        depthTest: false
       });
       
       const ring = new THREE.Mesh(ringGeometry, ringMaterial);
@@ -210,13 +298,14 @@
       const circleMaterial = new THREE.MeshBasicMaterial({
         color: config.reticle.color,
         transparent: true,
-        opacity: config.reticle.opacity
+        opacity: config.reticle.opacity,
+        depthTest: false
       });
       
       const circle = new THREE.Mesh(circleGeometry, circleMaterial);
       reticleGroup.add(circle);
       
-      // Grid mesh
+      // Grid mesh for better surface visualization
       const gridGeometry = new THREE.PlaneGeometry(
         config.reticle.gridSize, 
         config.reticle.gridSize, 
@@ -228,7 +317,8 @@
         color: config.reticle.gridColor,
         transparent: true,
         opacity: config.reticle.gridOpacity,
-        wireframe: true
+        wireframe: true,
+        depthTest: false
       });
       
       const grid = new THREE.Mesh(gridGeometry, gridMaterial);
@@ -236,11 +326,12 @@
       
       reticleGroup.matrixAutoUpdate = false;
       reticleGroup.visible = false;
+      reticleGroup.renderOrder = 999; // Ensure it renders on top
       
       return reticleGroup;
     }
 
-    // Initialize WebXR mode
+    // Initialize WebXR with better error handling
     async function initWebXR() {
       try {
         const hasPermission = await checkCameraPermissions();
@@ -249,9 +340,11 @@
           return;
         }
 
-        // Create Three.js scene
+        // Create Three.js scene with better lighting
         scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        scene.background = null;
+        
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 100);
         
         renderer = new THREE.WebGLRenderer({ 
           antialias: true, 
@@ -261,56 +354,86 @@
         renderer.setPixelRatio(window.devicePixelRatio || 1);
         renderer.setSize(window.innerWidth, window.innerHeight, false);
         renderer.xr.enabled = true;
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        renderer.physicallyCorrectLights = true;
         document.getElementById('ar-container').appendChild(renderer.domElement);
         
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        // Improved lighting setup
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
         scene.add(ambientLight);
         
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(0.5, 1, 0.25);
-        scene.add(directionalLight);
+        const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight1.position.set(0.5, 1, 0.25);
+        scene.add(directionalLight1);
+        
+        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
+        directionalLight2.position.set(-0.5, 1, -0.25);
+        scene.add(directionalLight2);
         
         // Create enhanced reticle
         reticle = createReticle();
         scene.add(reticle);
         
-        // Load model with proper scaling
+        // Load model with proper scaling and error handling
         const loader = new THREE.GLTFLoader();
         try {
           const gltf = await loader.loadAsync(config.modelUrl);
           model = gltf.scene;
           
           // Calculate bounding box to determine proper scale
-          modelBoundingBox.setFromObject(model);
-          const size = modelBoundingBox.getSize(new THREE.Vector3());
+          const box = new THREE.Box3().setFromObject(model);
+          const size = box.getSize(new THREE.Vector3());
           const maxDim = Math.max(size.x, size.y, size.z);
           
           // Adjust scale based on model size
-          const targetSize = 1.0; // Target size in meters
+          const targetSize = 0.5; // Slightly smaller target size for mobile
           const scaleFactor = targetSize / maxDim;
           
           model.scale.set(scaleFactor, scaleFactor, scaleFactor);
           currentScale = scaleFactor;
           
           model.visible = false; // Start hidden until placed
+          model.traverse(child => {
+            if (child.isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
+          
           scene.add(model);
           
-          console.log(`Model loaded with initial scale: ${scaleFactor.toFixed(2)}`);
+          if (config.debug) {
+            console.log(`Model loaded with initial scale: ${scaleFactor.toFixed(2)}`);
+          }
         } catch (e) {
           console.error("Failed to load model:", e);
+          showError("Failed to load 3D model. Using fallback cube.");
+          
           // Fallback cube with proper scaling
           model = new THREE.Mesh(
-            new THREE.BoxGeometry(1, 1, 1),
+            new THREE.BoxGeometry(0.5, 0.5, 0.5),
             new THREE.MeshStandardMaterial({ color: 0x00ff00 })
           );
           model.visible = false;
           scene.add(model);
         }
         
-        // Start AR session
-        const session = await navigator.xr.requestSession('immersive-ar');
-        await renderer.xr.setSession(session);
+        // Start AR session with better configuration
+        const sessionInit = { 
+          requiredFeatures: ['hit-test', 'dom-overlay'],
+          domOverlay: { root: document.body }
+        };
+        
+        arSession = await navigator.xr.requestSession('immersive-ar', sessionInit);
+        await renderer.xr.setSession(arSession);
+        
+        // Handle session end
+        arSession.addEventListener('end', () => {
+          if (renderer.xr.isPresenting) {
+            renderer.xr.getSession().end();
+          }
+          showError("AR session ended", false);
+        });
         
         document.getElementById('loading').style.display = 'none';
         document.getElementById('gesture-help').style.display = 'block';
@@ -328,11 +451,12 @@
         renderer.setAnimationLoop(render);
       } catch (e) {
         console.error("WebXR initialization failed:", e);
+        showError("WebXR failed. Trying fallback...");
         fallbackToARJS();
       }
     }
 
-    // Initialize AR.js fallback mode with proper scaling
+    // Initialize AR.js fallback with better scaling and error handling
     async function initARJS() {
       try {
         const hasPermission = await checkCameraPermissions();
@@ -341,24 +465,25 @@
           return;
         }
 
+        // Check if A-Frame is properly loaded
+        if (typeof AFRAME === 'undefined') {
+          throw new Error("A-Frame not loaded");
+        }
+        
         document.getElementById('ar-container').innerHTML = `
           <a-scene 
             vr-mode-ui="enabled: false"
-            arjs="sourceType: webcam; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
-            renderer="logarithmicDepthBuffer: true; precision: medium;"
+            arjs="sourceType: webcam; detectionMode: mono_and_matrix; matrixCodeType: 3x3; debugUIEnabled: false;"
+            renderer="logarithmicDepthBuffer: true; precision: medium; colorManagement: true;"
             embedded
             cursor="rayOrigin: mouse; fuse: false"
             raycaster="objects: .clickable">
             
             <a-camera gps-camera rotation-reader></a-camera>
             
-            <a-entity geometry="primitive: plane; width: 100; height: 100" 
-                     material="visible: false; shader: flat"
-                     rotation="-90 0 0" class="clickable surface-plane">
-            </a-entity>
-            
             <a-entity id="model" gltf-model="${config.modelUrl}" 
-                     visible="false">
+                     visible="false"
+                     shadow="cast: true; receive: true">
             </a-entity>
             
             <!-- AR.js reticle -->
@@ -386,13 +511,21 @@
           document.getElementById('loading').style.display = 'none';
           document.getElementById('gesture-help').style.display = 'block';
           
+          // Add surface plane for AR.js
+          const plane = document.createElement('a-entity');
+          plane.setAttribute('geometry', 'primitive: plane; width: 100; height: 100');
+          plane.setAttribute('material', 'visible: false; shader: flat');
+          plane.setAttribute('rotation', '-90 0 0');
+          plane.classList.add('clickable', 'surface-plane');
+          arjsScene.appendChild(plane);
+          
           // Wait for model to load to apply proper scaling
           modelEl.addEventListener('model-loaded', () => {
             const modelObject = modelEl.object3D;
             const box = new THREE.Box3().setFromObject(modelObject);
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
-            const targetSize = 1.0;
+            const targetSize = 0.5; // Smaller target size for mobile
             const scaleFactor = targetSize / maxDim;
             
             modelEl.setAttribute('scale', {
@@ -401,7 +534,9 @@
               z: scaleFactor
             });
             
-            console.log(`AR.js model scaled with factor: ${scaleFactor.toFixed(2)}`);
+            if (config.debug) {
+              console.log(`AR.js model scaled with factor: ${scaleFactor.toFixed(2)}`);
+            }
           });
           
           // Place model on surface click
@@ -419,6 +554,7 @@
                 e.detail.intersection.object.el.classList.contains('surface-plane')) {
               reticleEl.setAttribute('visible', 'true');
               reticleEl.setAttribute('position', e.detail.intersection.point);
+              updateSurfaceIndicator(e.detail.intersection.point);
             }
           });
           
@@ -426,6 +562,7 @@
           arjsScene.addEventListener('mouseleave', (e) => {
             if (!isModelPlaced) {
               reticleEl.setAttribute('visible', 'false');
+              document.getElementById('surface-indicator').style.display = 'none';
             }
           });
           
@@ -434,14 +571,24 @@
         });
       } catch (e) {
         console.error("AR.js initialization failed:", e);
-        document.getElementById('support-message').innerHTML = 
-          '<p class="unsupported">Failed to initialize AR</p>';
+        showError("AR.js failed to initialize", true);
+        
+        // If on iOS and Quick Look is enabled, offer that option
+        if (isIOS && config.ios.useARQuickLook && config.ios.quickLookUrl) {
+          document.getElementById('support-message').innerHTML = `
+            <p class="unsupported">AR requires iOS 12+ with Safari</p>
+            <button id="quicklook-button" style="margin-top: 10px;">View in AR Quick Look</button>
+          `;
+          document.getElementById('quicklook-button').addEventListener('click', () => {
+            window.location.href = config.ios.quickLookUrl;
+          });
+        }
       }
     }
 
     // Place model in WebXR mode
     function placeModel() {
-      if (!isModelPlaced && reticle.visible) {
+      if (!isModelPlaced && reticle && reticle.visible) {
         model.position.setFromMatrixPosition(reticle.matrix);
         model.quaternion.setFromRotationMatrix(reticle.matrix);
         model.visible = true;
@@ -453,6 +600,10 @@
             child.material.color.setHex(0x00ff00);
           }
         });
+        
+        // Hide surface indicator
+        document.getElementById('surface-indicator').style.display = 'none';
+        document.getElementById('info').textContent = "Model placed. Use gestures to move, scale, and rotate.";
       }
     }
 
@@ -462,15 +613,20 @@
       modelEl.setAttribute('visible', 'true');
       modelEl.setAttribute('position', position);
       isModelPlaced = true;
+      
+      document.getElementById('info').textContent = "Model placed. Use gestures to move, scale, and rotate.";
     }
 
-    // Set up gesture controls for WebXR
+    // Set up gesture controls for WebXR with better handling
     function setupGestureControls() {
       const canvas = renderer.domElement;
-      hammerManager = new Hammer.Manager(canvas);
+      hammerManager = new Hammer.Manager(canvas, {
+        touchAction: 'none',
+        inputClass: Hammer.TouchInput
+      });
       
       // Single finger pan to move model
-      const pan = new Hammer.Pan({ threshold: 5 });
+      const pan = new Hammer.Pan({ threshold: 5, pointers: 1 });
       hammerManager.add(pan);
       
       // Two finger pinch to scale model
@@ -481,63 +637,74 @@
       const rotate = new Hammer.Rotate({ threshold: 0.1 });
       hammerManager.add(rotate);
       
+      let startPosition = null;
+      let startScale = currentScale;
+      let startRotation = 0;
+      
       hammerManager.on("panstart", (e) => {
         if (isModelPlaced) {
-          lastPosition.copy(model.position);
+          startPosition = model.position.clone();
         }
       });
       
       hammerManager.on("pan", (e) => {
-        if (isModelPlaced && e.pointers.length === 1) {
-          const vector = new THREE.Vector3(
-            (e.center.x / window.innerWidth) * 2 - 1,
-            -(e.center.y / window.innerHeight) * 2 + 1,
-            0.5
-          );
-          vector.unproject(camera);
+        if (isModelPlaced && startPosition && e.pointers.length === 1) {
+          // Calculate movement in world space
+          const movementX = e.deltaX / window.innerWidth * 2;
+          const movementY = -e.deltaY / window.innerHeight * 2;
           
-          const direction = vector.sub(camera.position).normalize();
+          const direction = new THREE.Vector3(movementX, movementY, 0);
+          direction.unproject(camera).sub(camera.position).normalize();
+          
           const distance = -camera.position.y / direction.y;
-          const position = camera.position.clone().add(direction.multiplyScalar(distance));
+          const newPosition = camera.position.clone().add(direction.multiplyScalar(distance));
           
-          model.position.copy(position);
+          model.position.copy(newPosition);
         }
       });
       
       hammerManager.on("pinchstart", (e) => {
         if (isModelPlaced) {
-          initialScale = currentScale;
+          startScale = currentScale;
         }
       });
       
       hammerManager.on("pinch", (e) => {
         if (isModelPlaced) {
           currentScale = Math.min(config.maxScale, 
-                                Math.max(config.minScale, initialScale * e.scale));
+                                Math.max(config.minScale, startScale * e.scale));
           model.scale.set(currentScale, currentScale, currentScale);
         }
       });
       
       hammerManager.on("rotatestart", (e) => {
         if (isModelPlaced) {
-          initialRotation = model.rotation.y;
+          startRotation = model.rotation.y;
         }
       });
       
       hammerManager.on("rotate", (e) => {
         if (isModelPlaced) {
-          model.rotation.y = initialRotation + e.rotation * (Math.PI / 180);
+          model.rotation.y = startRotation + e.rotation * (Math.PI / 180);
         }
       });
+      
+      // Prevent default touch behaviors
+      canvas.addEventListener('touchmove', (e) => {
+        if (isModelPlaced) e.preventDefault();
+      }, { passive: false });
     }
 
-    // Set up gesture controls for AR.js
+    // Set up gesture controls for AR.js with better handling
     function setupARJSGestureControls(modelEl) {
       const container = document.getElementById('ar-container');
-      hammerManager = new Hammer.Manager(container);
+      hammerManager = new Hammer.Manager(container, {
+        touchAction: 'none',
+        inputClass: Hammer.TouchInput
+      });
       
       // Single finger pan to move model
-      const pan = new Hammer.Pan({ threshold: 5 });
+      const pan = new Hammer.Pan({ threshold: 5, pointers: 1 });
       hammerManager.add(pan);
       
       // Two finger pinch to scale model
@@ -560,7 +727,7 @@
       });
       
       hammerManager.on("pan", (e) => {
-        if (isModelPlaced && e.pointers.length === 1 && startPosition) {
+        if (isModelPlaced && startPosition && e.pointers.length === 1) {
           const camera = arjsScene.camera;
           const movementX = e.deltaX / window.innerWidth * 2;
           const movementY = -e.deltaY / window.innerHeight * 2;
@@ -612,21 +779,19 @@
           });
         }
       });
+      
+      // Prevent default touch behaviors
+      container.addEventListener('touchmove', (e) => {
+        if (isModelPlaced) e.preventDefault();
+      }, { passive: false });
     }
 
-    // WebXR render loop
+    // WebXR render loop with better hit test stability
     function render(timestamp, frame) {
       if (!frame) return;
       
-      // Update reticle pulse animation
+      // Update reticle position if model isn't placed
       if (reticle && !isModelPlaced) {
-        reticlePulse += config.reticle.pulseSpeed * 0.01 * reticlePulseDirection;
-        if (reticlePulse > config.reticle.pulseMax || reticlePulse < config.reticle.pulseMin) {
-          reticlePulseDirection *= -1;
-        }
-        
-        reticle.scale.set(reticlePulse, reticlePulse, reticlePulse);
-        
         // Get hit test results for surface detection
         const hitTestResults = frame.getHitTestResultsForInputSource(frame.session.inputSources[0]);
         
@@ -655,25 +820,51 @@
       const indicator = document.getElementById('surface-indicator');
       if (!indicator) return;
       
+      // Convert 3D position to 2D screen position
       position.project(camera);
       
       const x = (position.x * 0.5 + 0.5) * window.innerWidth;
       const y = -(position.y * 0.5 - 0.5) * window.innerHeight;
       
-      indicator.style.left = `${x - 20}px`;
-      indicator.style.top = `${y - 20}px`;
-      indicator.style.display = 'block';
+      // Only show if position is on screen
+      if (x >= 0 && x <= window.innerWidth && y >= 0 && y <= window.innerHeight) {
+        indicator.style.left = `${x}px`;
+        indicator.style.top = `${y}px`;
+        indicator.style.display = 'block';
+      } else {
+        indicator.style.display = 'none';
+      }
     }
 
     // Show camera error message
     function showCameraError() {
       document.getElementById('loading').style.display = 'none';
       document.getElementById('support-message').innerHTML = 
-        '<p class="unsupported">Camera access was denied. Please enable camera permissions.</p>';
+        '<p class="unsupported">Camera access is required for AR. Please enable camera permissions in your browser settings.</p>';
+      
+      // Add reset button for Android
+      if (isAndroid) {
+        const resetButton = document.createElement('button');
+        resetButton.id = 'reset-button';
+        resetButton.textContent = 'Reset Permissions';
+        resetButton.addEventListener('click', () => {
+          if (navigator.permissions && navigator.permissions.query) {
+            navigator.permissions.query({name: 'camera'}).then(() => {
+              window.location.reload();
+            });
+          } else {
+            window.location.reload();
+          }
+        });
+        document.getElementById('support-message').appendChild(resetButton);
+      }
     }
 
     // Fallback to AR.js
     function fallbackToARJS() {
+      if (config.debug) {
+        console.log("Falling back to AR.js");
+      }
       initARJS();
     }
 
@@ -688,21 +879,53 @@
       }
     }
 
-    // Start button event listener
+    // Start button event listener with better initialization flow
     document.getElementById('start-button').addEventListener('click', async () => {
-      const supported = await checkXRSupport();
       document.getElementById('start-button').disabled = true;
+      document.getElementById('start-button').textContent = 'Loading...';
       
-      if (supported) {
-        initWebXR();
-      } else {
-        fallbackToARJS();
+      try {
+        // First check camera permissions
+        const hasPermission = await checkCameraPermissions();
+        if (!hasPermission) {
+          showCameraError();
+          return;
+        }
+        
+        // Then check XR support
+        const supported = await checkXRSupport();
+        
+        if (supported) {
+          initWebXR();
+        } else {
+          fallbackToARJS();
+        }
+      } catch (e) {
+        console.error("Initialization error:", e);
+        showError("Failed to initialize AR", true);
       }
     });
 
-    // Initialize on load
+    // Initialize on load with better feature detection
     window.addEventListener('load', () => {
       window.addEventListener('resize', onWindowResize);
+      
+      // Check for basic WebXR support
+      if (!('xr' in navigator)) {
+        document.getElementById('support-message').innerHTML = 
+          '<p class="unsupported">WebXR not supported in your browser</p>';
+        
+        // If on iOS, suggest Safari
+        if (isIOS) {
+          document.getElementById('support-message').innerHTML += 
+            '<p>Please use Safari on iOS 12+ for AR features</p>';
+        }
+        
+        // Enable start button anyway for AR.js fallback
+        document.getElementById('start-button').disabled = false;
+      } else {
+        document.getElementById('start-button').disabled = false;
+      }
     });
   </script>
 </body>
