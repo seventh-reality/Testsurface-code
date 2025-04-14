@@ -10,6 +10,7 @@
   <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
   <!-- Three.js -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
   <!-- Hammer.js for gestures -->
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
@@ -23,7 +24,7 @@
       font-family: -apple-system, Arial, sans-serif;
     }
     #ar-container {
-      position: fixed;  /* Changed from absolute to fixed */
+      position: fixed;
       top: 0;
       left: 0;
       width: 100vw;
@@ -91,7 +92,6 @@
       z-index: 15;
       display: none;
     }
-    /* Ensure canvas fills container */
     canvas {
       display: block;
       width: 100% !important;
@@ -118,10 +118,11 @@
     const config = {
       modelUrl: 'all.glb',
       debug: true,
-      initialScale: 0.5,
+      initialScale: 1.0, // Changed from 0.5 to 1.0 for better initial scaling
       minScale: 0.1,
       maxScale: 2.0,
-      stabilityThreshold: 0.05
+      stabilityThreshold: 0.05,
+      modelUnits: 'meters' // Added to specify model units
     };
 
     // Global variables
@@ -137,6 +138,7 @@
     let initialScale = 1;
     let initialAngle = 0;
     let initialRotation = 0;
+    let modelBoundingBox = new THREE.Box3(); // For proper scaling
 
     // Check for WebXR support
     async function checkXRSupport() {
@@ -185,8 +187,8 @@
         document.getElementById('ar-container').appendChild(renderer.domElement);
         
         // Lighting
-        const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-        scene.add(light);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        scene.add(ambientLight);
         
         const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
         directionalLight.position.set(0.5, 1, 0.25);
@@ -201,18 +203,33 @@
         reticle.visible = false;
         scene.add(reticle);
         
-        // Load model
+        // Load model with proper scaling
         const loader = new THREE.GLTFLoader();
         try {
           const gltf = await loader.loadAsync(config.modelUrl);
           model = gltf.scene;
-          model.scale.set(config.initialScale, config.initialScale, config.initialScale);
+          
+          // Calculate bounding box to determine proper scale
+          modelBoundingBox.setFromObject(model);
+          const size = modelBoundingBox.getSize(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z);
+          
+          // Adjust scale based on model size
+          const targetSize = 1.0; // Target size in meters
+          const scaleFactor = targetSize / maxDim;
+          
+          model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+          currentScale = scaleFactor;
+          
           model.visible = false; // Start hidden until placed
           scene.add(model);
+          
+          console.log(`Model loaded with initial scale: ${scaleFactor.toFixed(2)}`);
         } catch (e) {
           console.error("Failed to load model:", e);
+          // Fallback cube with proper scaling
           model = new THREE.Mesh(
-            new THREE.BoxGeometry(config.initialScale, config.initialScale, config.initialScale),
+            new THREE.BoxGeometry(1, 1, 1),
             new THREE.MeshStandardMaterial({ color: 0x00ff00 })
           );
           model.visible = false;
@@ -243,7 +260,7 @@
       }
     }
 
-    // Initialize AR.js fallback mode
+    // Initialize AR.js fallback mode with proper scaling
     async function initARJS() {
       try {
         const hasPermission = await checkCameraPermissions();
@@ -269,7 +286,6 @@
             </a-entity>
             
             <a-entity id="model" gltf-model="${config.modelUrl}" 
-                     scale="${config.initialScale} ${config.initialScale} ${config.initialScale}" 
                      visible="false">
             </a-entity>
           </a-scene>
@@ -281,6 +297,30 @@
         arjsScene.addEventListener('loaded', () => {
           document.getElementById('loading').style.display = 'none';
           document.getElementById('gesture-help').style.display = 'block';
+          
+          // Wait for model to load to apply proper scaling
+          modelEl.addEventListener('model-loaded', () => {
+            // Get the three.js object from A-Frame entity
+            const modelObject = modelEl.object3D;
+            
+            // Calculate bounding box
+            const box = new THREE.Box3().setFromObject(modelObject);
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            
+            // Calculate scale factor
+            const targetSize = 1.0; // Target size in meters
+            const scaleFactor = targetSize / maxDim;
+            
+            // Apply scaling
+            modelEl.setAttribute('scale', {
+              x: scaleFactor,
+              y: scaleFactor,
+              z: scaleFactor
+            });
+            
+            console.log(`AR.js model scaled with factor: ${scaleFactor.toFixed(2)}`);
+          });
           
           // Place model on surface click
           arjsScene.addEventListener('click', (e) => {
@@ -300,6 +340,7 @@
       }
     }
 
+    // [Rest of your existing functions remain the same...]
     // Place model in WebXR mode
     function placeModel() {
       if (!isModelPlaced && reticle.visible) {
