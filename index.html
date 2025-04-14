@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <!-- Important for iOS Safari AR -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <title>AR Model Viewer with SLAM</title>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.4.0/dist/ar.js"></script>
     <script src="https://unpkg.com/@google/model-viewer@2.1.1/dist/model-viewer.min.js" type="module"></script>
     <style>
         body {
@@ -21,10 +22,10 @@
             position: absolute;
             width: 100%;
             height: 100%;
+            display: none; /* Initially hidden */
         }
         
         #model-viewer-container {
-            display: none;
             position: absolute;
             width: 100%;
             height: 100%;
@@ -40,6 +41,7 @@
             background: rgba(0,0,0,0.7);
             padding: 20px;
             border-radius: 10px;
+            z-index: 1000;
         }
         
         #switch-btn {
@@ -70,25 +72,27 @@
     </style>
 </head>
 <body>
-    <div id="ar-container"></div>
+    <!-- We'll use Model Viewer for both 3D and AR modes -->
     <div id="model-viewer-container">
         <model-viewer 
             id="model-viewer"
             ar
-            ar-modes="scene-viewer webxr quick-look"
+            ar-modes="webxr scene-viewer quick-look"
             camera-controls
             auto-rotate
             shadow-intensity="1"
             style="width: 100%; height: 100%;"
             src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
             alt="3D model"
-            ar-scale="fixed">
+            ar-scale="fixed"
+            touch-action="none">
+            <button id="ar-button" slot="ar-button" style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);">
+                View in AR
+            </button>
         </model-viewer>
     </div>
     
-    <div id="loading">Loading AR experience...</div>
-    <button id="switch-btn">View in 3D</button>
-    <button id="back-btn">Back to AR</button>
+    <div id="loading">Loading 3D experience...</div>
     
     <script>
         // Check device compatibility
@@ -96,150 +100,58 @@
                      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         const isAndroid = /Android/.test(navigator.userAgent);
         
-        let arSession = null;
-        let model = null;
-        
-        // Model URL - using a publicly accessible demo model
-        const modelUrl = 'https://modelviewer.dev/shared-assets/models/Astronaut.glb';
-        
-        // DOM elements
-        const arContainer = document.getElementById('ar-container');
-        const modelViewerContainer = document.getElementById('model-viewer-container');
         const loadingElement = document.getElementById('loading');
-        const switchBtn = document.getElementById('switch-btn');
-        const backBtn = document.getElementById('back-btn');
-        
-        // Initialize AR.js with SLAM/World Tracking
-        function initAR() {
-            // Create a Three.js scene for AR.js
-            const scene = new THREE.Scene();
-            const camera = new THREE.Camera();
-            scene.add(camera);
-            
-            const renderer = new THREE.WebGLRenderer({
-                antialias: true,
-                alpha: true
-            });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            arContainer.appendChild(renderer.domElement);
-            
-            // Initialize AR.js with world tracking
-            const arToolkitContext = new THREEx.ArToolkitContext({
-                cameraParametersUrl: 'https://ar-js-org.github.io/AR.js/data/data/camera_para.dat',
-                detectionMode: 'mono',
-                maxDetectionRate: 60,
-                canvasWidth: window.innerWidth,
-                canvasHeight: window.innerHeight,
-            });
-            
-            arToolkitContext.init(() => {
-                camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
-            });
-            
-            // Create AR marker controls (using SLAM/world tracking)
-            const arMarkerControls = new THREEx.ArMarkerControls(arToolkitContext, camera, {
-                type: 'pattern',
-                patternUrl: 'https://ar-js-org.github.io/AR.js/data/data/hiro.patt',
-                changeMatrixMode: 'cameraTransformMatrix'
-            });
-            
-            // For SLAM/world tracking without markers
-            if (isIOS || isAndroid) {
-                arMarkerControls.parameters.changeMatrixMode = 'cameraTransformMatrix';
-            }
-            
-            // Add lights
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-            scene.add(ambientLight);
-            
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight.position.set(0, 10, 0);
-            scene.add(directionalLight);
-            
-            // Load 3D model
-            const loader = new THREE.GLTFLoader();
-            loader.load(modelUrl, (gltf) => {
-                model = gltf.scene;
-                model.scale.set(0.5, 0.5, 0.5);
-                model.position.set(0, 0, 0);
-                scene.add(model);
-                loadingElement.style.display = 'none';
-            }, undefined, (error) => {
-                console.error('Error loading model:', error);
-                loadingElement.textContent = 'Error loading model. Please try again.';
-            });
-            
-            // Handle window resize
-            window.addEventListener('resize', () => {
-                renderer.setSize(window.innerWidth, window.innerHeight);
-                arToolkitContext.arController.setProjectionMatrix();
-            });
-            
-            // Animation loop
-            function animate() {
-                requestAnimationFrame(animate);
-                
-                if (arToolkitContext.ready) {
-                    camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
-                }
-                
-                renderer.render(scene, camera);
-            }
-            
-            animate();
-            
-            return {
-                scene,
-                camera,
-                renderer,
-                arToolkitContext
-            };
-        }
-        
-        // Initialize based on device
-        if (isIOS || isAndroid) {
-            // For mobile devices, we'll use Model Viewer's AR capabilities when in AR mode
-            arSession = initAR();
-            
-            // Show/hide AR and 3D viewer
-            switchBtn.addEventListener('click', () => {
-                arContainer.style.display = 'none';
-                modelViewerContainer.style.display = 'block';
-                backBtn.style.display = 'block';
-                switchBtn.style.display = 'none';
-            });
-            
-            backBtn.addEventListener('click', () => {
-                arContainer.style.display = 'block';
-                modelViewerContainer.style.display = 'none';
-                backBtn.style.display = 'none';
-                switchBtn.style.display = 'block';
-            });
-        } else {
-            // For desktop, just show the 3D viewer
-            loadingElement.style.display = 'none';
-            arContainer.style.display = 'none';
-            modelViewerContainer.style.display = 'block';
-            switchBtn.style.display = 'none';
-        }
-        
-        // Handle Model Viewer events
         const modelViewer = document.querySelector('#model-viewer');
         
-        modelViewer.addEventListener('ar-status', (event) => {
-            if (event.detail.status === 'session-started') {
-                console.log('AR session started');
-            } else if (event.detail.status === 'session-ended') {
-                console.log('AR session ended');
-            }
+        // Handle Model Viewer events
+        modelViewer.addEventListener('load', () => {
+            loadingElement.style.display = 'none';
+            console.log('Model loaded successfully');
         });
         
         modelViewer.addEventListener('error', (event) => {
             console.error('Model Viewer error:', event.detail);
             loadingElement.textContent = 'Error: ' + (event.detail.message || 'Failed to load model');
-            loadingElement.style.display = 'block';
         });
+        
+        modelViewer.addEventListener('ar-status', (event) => {
+            console.log('AR Status:', event.detail.status);
+            if (event.detail.status === 'session-started') {
+                console.log('AR session started');
+                // Hide the 3D view controls when in AR
+                document.getElementById('ar-button').style.display = 'none';
+            } else if (event.detail.status === 'session-ended') {
+                console.log('AR session ended');
+                // Show the AR button again
+                document.getElementById('ar-button').style.display = 'block';
+            }
+        });
+        
+        // For iOS, we need to handle the Quick Look specific cases
+        if (isIOS) {
+            modelViewer.addEventListener('quick-look-button-tapped', () => {
+                console.log('Quick Look button tapped');
+            });
+            
+            modelViewer.addEventListener('quick-look-opened', () => {
+                console.log('Quick Look opened');
+            });
+            
+            modelViewer.addEventListener('quick-look-closed', () => {
+                console.log('Quick Look closed');
+            });
+        }
+        
+        // For Android, handle Scene Viewer cases
+        if (isAndroid) {
+            modelViewer.addEventListener('scene-viewer-ready', () => {
+                console.log('Scene Viewer ready');
+            });
+            
+            modelViewer.addEventListener('scene-viewer-failed', (event) => {
+                console.error('Scene Viewer failed:', event.detail);
+            });
+        }
     </script>
 </body>
 </html>
