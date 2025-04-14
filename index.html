@@ -118,17 +118,35 @@
     const config = {
       modelUrl: 'all.glb',
       debug: true,
-      initialScale: 1.0, // Changed from 0.5 to 1.0 for better initial scaling
+      initialScale: 1.0,
       minScale: 0.1,
       maxScale: 2.0,
       stabilityThreshold: 0.05,
-      modelUnits: 'meters' // Added to specify model units
+      modelUnits: 'meters',
+      reticle: {
+        ringRadius: 0.15,
+        ringThickness: 0.05,
+        segments: 32,
+        color: 0xffffff,
+        opacity: 0.8,
+        pulseSpeed: 0.5,
+        pulseMin: 0.9,
+        pulseMax: 1.1,
+        circleRadius: 0.1,
+        circleSegments: 24,
+        gridSize: 0.3,
+        gridDivisions: 8,
+        gridColor: 0xffffff,
+        gridOpacity: 0.3
+      }
     };
 
     // Global variables
     let scene, camera, renderer;
     let model = null;
     let reticle = null;
+    let reticlePulse = 1;
+    let reticlePulseDirection = 1;
     let arjsScene = null;
     let isModelPlaced = false;
     let currentScale = config.initialScale;
@@ -138,7 +156,7 @@
     let initialScale = 1;
     let initialAngle = 0;
     let initialRotation = 0;
-    let modelBoundingBox = new THREE.Box3(); // For proper scaling
+    let modelBoundingBox = new THREE.Box3();
 
     // Check for WebXR support
     async function checkXRSupport() {
@@ -161,6 +179,65 @@
         console.error("Camera permission denied:", e);
         return false;
       }
+    }
+
+    // Create enhanced reticle mesh
+    function createReticle() {
+      const reticleGroup = new THREE.Group();
+      
+      // Outer ring
+      const ringGeometry = new THREE.RingGeometry(
+        config.reticle.ringRadius, 
+        config.reticle.ringRadius + config.reticle.ringThickness, 
+        config.reticle.segments
+      ).rotateX(-Math.PI / 2);
+      
+      const ringMaterial = new THREE.MeshBasicMaterial({
+        color: config.reticle.color,
+        transparent: true,
+        opacity: config.reticle.opacity
+      });
+      
+      const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+      reticleGroup.add(ring);
+      
+      // Inner circle
+      const circleGeometry = new THREE.CircleGeometry(
+        config.reticle.circleRadius, 
+        config.reticle.circleSegments
+      ).rotateX(-Math.PI / 2);
+      
+      const circleMaterial = new THREE.MeshBasicMaterial({
+        color: config.reticle.color,
+        transparent: true,
+        opacity: config.reticle.opacity
+      });
+      
+      const circle = new THREE.Mesh(circleGeometry, circleMaterial);
+      reticleGroup.add(circle);
+      
+      // Grid mesh
+      const gridGeometry = new THREE.PlaneGeometry(
+        config.reticle.gridSize, 
+        config.reticle.gridSize, 
+        config.reticle.gridDivisions, 
+        config.reticle.gridDivisions
+      ).rotateX(-Math.PI / 2);
+      
+      const gridMaterial = new THREE.MeshBasicMaterial({
+        color: config.reticle.gridColor,
+        transparent: true,
+        opacity: config.reticle.gridOpacity,
+        wireframe: true
+      });
+      
+      const grid = new THREE.Mesh(gridGeometry, gridMaterial);
+      reticleGroup.add(grid);
+      
+      reticleGroup.matrixAutoUpdate = false;
+      reticleGroup.visible = false;
+      
+      return reticleGroup;
     }
 
     // Initialize WebXR mode
@@ -194,13 +271,8 @@
         directionalLight.position.set(0.5, 1, 0.25);
         scene.add(directionalLight);
         
-        // Reticle for surface indication
-        reticle = new THREE.Mesh(
-          new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
-          new THREE.MeshBasicMaterial({ color: 0xffffff })
-        );
-        reticle.matrixAutoUpdate = false;
-        reticle.visible = false;
+        // Create enhanced reticle
+        reticle = createReticle();
         scene.add(reticle);
         
         // Load model with proper scaling
@@ -288,11 +360,27 @@
             <a-entity id="model" gltf-model="${config.modelUrl}" 
                      visible="false">
             </a-entity>
+            
+            <!-- AR.js reticle -->
+            <a-entity id="arjs-reticle" visible="false">
+              <a-ring color="white" radius-inner="${config.reticle.ringRadius}" 
+                     radius-outer="${config.reticle.ringRadius + config.reticle.ringThickness}" 
+                     opacity="${config.reticle.opacity}" rotation="-90 0 0">
+              </a-ring>
+              <a-circle color="white" radius="${config.reticle.circleRadius}" 
+                       opacity="${config.reticle.opacity}" rotation="-90 0 0">
+              </a-circle>
+              <a-grid material="wireframe: true; color: white; opacity: ${config.reticle.gridOpacity}" 
+                      width="${config.reticle.gridSize}" height="${config.reticle.gridSize}" 
+                      rotation="-90 0 0">
+              </a-grid>
+            </a-entity>
           </a-scene>
         `;
         
         arjsScene = document.querySelector('a-scene');
         const modelEl = document.getElementById('model');
+        const reticleEl = document.getElementById('arjs-reticle');
         
         arjsScene.addEventListener('loaded', () => {
           document.getElementById('loading').style.display = 'none';
@@ -300,19 +388,13 @@
           
           // Wait for model to load to apply proper scaling
           modelEl.addEventListener('model-loaded', () => {
-            // Get the three.js object from A-Frame entity
             const modelObject = modelEl.object3D;
-            
-            // Calculate bounding box
             const box = new THREE.Box3().setFromObject(modelObject);
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
-            
-            // Calculate scale factor
-            const targetSize = 1.0; // Target size in meters
+            const targetSize = 1.0;
             const scaleFactor = targetSize / maxDim;
             
-            // Apply scaling
             modelEl.setAttribute('scale', {
               x: scaleFactor,
               y: scaleFactor,
@@ -327,6 +409,23 @@
             if (!isModelPlaced && e.detail.intersection && 
                 e.detail.intersection.object.el.classList.contains('surface-plane')) {
               placeModelARJS(e.detail.intersection.point);
+              reticleEl.setAttribute('visible', 'false');
+            }
+          });
+          
+          // Show reticle when intersecting with surface
+          arjsScene.addEventListener('mouseenter', (e) => {
+            if (!isModelPlaced && e.detail.intersection && 
+                e.detail.intersection.object.el.classList.contains('surface-plane')) {
+              reticleEl.setAttribute('visible', 'true');
+              reticleEl.setAttribute('position', e.detail.intersection.point);
+            }
+          });
+          
+          // Hide reticle when not intersecting with surface
+          arjsScene.addEventListener('mouseleave', (e) => {
+            if (!isModelPlaced) {
+              reticleEl.setAttribute('visible', 'false');
             }
           });
           
@@ -340,7 +439,6 @@
       }
     }
 
-    // [Rest of your existing functions remain the same...]
     // Place model in WebXR mode
     function placeModel() {
       if (!isModelPlaced && reticle.visible) {
@@ -350,7 +448,11 @@
         isModelPlaced = true;
         
         // Change reticle color to indicate placement
-        reticle.material.color.setHex(0x00ff00);
+        reticle.children.forEach(child => {
+          if (child.material) {
+            child.material.color.setHex(0x00ff00);
+          }
+        });
       }
     }
 
@@ -387,7 +489,6 @@
       
       hammerManager.on("pan", (e) => {
         if (isModelPlaced && e.pointers.length === 1) {
-          // Convert screen coordinates to world coordinates
           const vector = new THREE.Vector3(
             (e.center.x / window.innerWidth) * 2 - 1,
             -(e.center.y / window.innerHeight) * 2 + 1,
@@ -460,18 +561,13 @@
       
       hammerManager.on("pan", (e) => {
         if (isModelPlaced && e.pointers.length === 1 && startPosition) {
-          // Convert pan movement to model position change
           const camera = arjsScene.camera;
           const movementX = e.deltaX / window.innerWidth * 2;
           const movementY = -e.deltaY / window.innerHeight * 2;
           
-          // Create a vector in camera space
           const movement = new THREE.Vector3(movementX, movementY, 0);
-          
-          // Transform to world space
           movement.applyQuaternion(camera.quaternion);
           
-          // Update model position
           const newPosition = new THREE.Vector3(
             startPosition.x + movement.x,
             startPosition.y + movement.y,
@@ -522,7 +618,15 @@
     function render(timestamp, frame) {
       if (!frame) return;
       
+      // Update reticle pulse animation
       if (reticle && !isModelPlaced) {
+        reticlePulse += config.reticle.pulseSpeed * 0.01 * reticlePulseDirection;
+        if (reticlePulse > config.reticle.pulseMax || reticlePulse < config.reticle.pulseMin) {
+          reticlePulseDirection *= -1;
+        }
+        
+        reticle.scale.set(reticlePulse, reticlePulse, reticlePulse);
+        
         // Get hit test results for surface detection
         const hitTestResults = frame.getHitTestResultsForInputSource(frame.session.inputSources[0]);
         
