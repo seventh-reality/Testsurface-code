@@ -7,7 +7,7 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/webxr/VRButton.js"></script>
-    <!-- WebXR Polyfill for iOS -->
+    <!-- Updated WebXR Polyfill -->
     <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.min.js"></script>
     <style>
         body {
@@ -93,12 +93,41 @@
             padding: 20px;
             display: none;
         }
+        
+        #permission-prompt {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+            z-index: 1001;
+        }
+        
+        #permission-prompt button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 10px 5px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
     <div id="ar-container"></div>
     <div id="loading">Loading AR experience...</div>
     <div id="unsupported"></div>
+    <div id="permission-prompt">
+        <p>This app needs camera permission to work with AR.</p>
+        <button id="grant-permission">Grant Permission</button>
+        <button id="deny-permission">Deny</button>
+    </div>
     
     <!-- Custom AR UI Controls -->
     <button id="enter-ar" class="ar-ui-button">Start AR</button>
@@ -108,15 +137,21 @@
     <button id="move-btn" class="ar-ui-button">Move</button>
     
     <script>
-        // Initialize WebXR Polyfill for iOS
+        // Initialize WebXR Polyfill for iOS and older Android devices
         if (!('xr' in navigator) || !navigator.xr) {
-            const polyfill = new WebXRPolyfill();
+            const polyfill = new WebXRPolyfill({
+                global: window,
+                allowCardboardOnDesktop: false,
+            });
         }
 
         // DOM elements
         const container = document.getElementById('ar-container');
         const loadingElement = document.getElementById('loading');
         const unsupportedElement = document.getElementById('unsupported');
+        const permissionPrompt = document.getElementById('permission-prompt');
+        const grantPermissionBtn = document.getElementById('grant-permission');
+        const denyPermissionBtn = document.getElementById('deny-permission');
         const enterARBtn = document.getElementById('enter-ar');
         const exitARBtn = document.getElementById('exit-ar');
         const rotateBtn = document.getElementById('rotate-btn');
@@ -134,33 +169,51 @@
         let modelGroup = null;
         let isARSessionActive = false;
         let lastTapTime = 0;
+        let hasRequestedPermission = false;
         
         // Check for WebXR support
-        function checkXRSupport() {
+        async function checkXRSupport() {
             if (!navigator.xr) {
-                showUnsupported("WebXR is not supported in your browser.");
+                showUnsupported("WebXR is not supported in your browser. Try using Chrome or Safari on a newer device.");
                 return false;
             }
             
-            return navigator.xr.isSessionSupported('immersive-ar')
-                .then((supported) => {
-                    if (!supported) {
-                        showUnsupported("AR is not supported on your device.");
-                        return false;
-                    }
-                    return true;
-                })
-                .catch((error) => {
-                    console.error("Error checking AR support:", error);
-                    showUnsupported("Error checking AR support on your device.");
+            try {
+                const supported = await navigator.xr.isSessionSupported('immersive-ar');
+                if (!supported) {
+                    showUnsupported("AR is not supported on your device or browser.");
                     return false;
-                });
+                }
+                return true;
+            } catch (error) {
+                console.error("Error checking AR support:", error);
+                showUnsupported("Error checking AR support on your device.");
+                return false;
+            }
         }
         
         function showUnsupported(message) {
             loadingElement.style.display = 'none';
             unsupportedElement.style.display = 'block';
             unsupportedElement.textContent = message;
+        }
+        
+        // Check camera permissions
+        async function checkCameraPermission() {
+            try {
+                // This is a workaround for Android devices
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                stream.getTracks().forEach(track => track.stop());
+                return true;
+            } catch (error) {
+                console.log("Camera permission denied:", error);
+                return false;
+            }
+        }
+        
+        function showPermissionPrompt() {
+            permissionPrompt.style.display = 'block';
+            loadingElement.style.display = 'none';
         }
         
         // Initialize Three.js scene
@@ -173,11 +226,13 @@
             renderer = new THREE.WebGLRenderer({ 
                 antialias: true, 
                 alpha: true,
-                preserveDrawingBuffer: true // Needed for some Android devices
+                preserveDrawingBuffer: true, // Needed for some Android devices
+                powerPreference: "high-performance"
             });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
+            renderer.xr.setReferenceSpaceType('local');
             container.appendChild(renderer.domElement);
             
             // Add lights
@@ -232,10 +287,20 @@
                     throw new Error('WebXR not supported on this device');
                 }
                 
+                // For Android devices, check camera permission first
+                if (!hasRequestedPermission) {
+                    const hasPermission = await checkCameraPermission();
+                    if (!hasPermission) {
+                        showPermissionPrompt();
+                        return;
+                    }
+                    hasRequestedPermission = true;
+                }
+                
                 // Request AR session with appropriate options
                 const sessionInit = { 
                     requiredFeatures: ['hit-test'],
-                    optionalFeatures: ['dom-overlay']
+                    optionalFeatures: ['dom-overlay', 'local-floor']
                 };
                 
                 // Add dom-overlay if supported
@@ -262,6 +327,7 @@
                 rotateBtn.style.display = 'block';
                 scaleBtn.style.display = 'block';
                 moveBtn.style.display = 'block';
+                permissionPrompt.style.display = 'none';
                 
                 // Highlight the current interaction mode
                 updateInteractionUI();
@@ -275,6 +341,16 @@
                 loadingElement.textContent = 'Failed to start AR: ' + error.message;
                 loadingElement.style.display = 'block';
                 enterARBtn.style.display = 'block';
+                permissionPrompt.style.display = 'none';
+                
+                // For iOS, sometimes we need to try again
+                if (error.message.includes('Requested device not found') || 
+                    error.message.includes('Session creation failed')) {
+                    setTimeout(() => {
+                        loadingElement.textContent = 'Trying again to start AR...';
+                        initARSession();
+                    }, 1000);
+                }
             }
         }
         
@@ -455,6 +531,29 @@
         moveBtn.addEventListener('click', () => {
             interactionMode = 'move';
             updateInteractionUI();
+        });
+        
+        grantPermissionBtn.addEventListener('click', async () => {
+            permissionPrompt.style.display = 'none';
+            loadingElement.style.display = 'block';
+            loadingElement.textContent = 'Requesting camera permission...';
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                stream.getTracks().forEach(track => track.stop());
+                hasRequestedPermission = true;
+                await initARSession();
+            } catch (error) {
+                console.error('Camera permission denied:', error);
+                loadingElement.textContent = 'Camera permission is required for AR.';
+                loadingElement.style.display = 'block';
+                enterARBtn.style.display = 'block';
+            }
+        });
+        
+        denyPermissionBtn.addEventListener('click', () => {
+            permissionPrompt.style.display = 'none';
+            enterARBtn.style.display = 'block';
         });
         
         // Initialize the scene when the page loads
