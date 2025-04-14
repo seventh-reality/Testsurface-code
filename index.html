@@ -1,302 +1,123 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Custom AR Model Viewer</title>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/webxr/VRButton.js"></script>
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            font-family: Arial, sans-serif;
-        }
-        
-        #ar-container {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            display: none;
-        }
-        
-        #loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            font-size: 20px;
-            background: rgba(0,0,0,0.7);
-            padding: 20px;
-            border-radius: 10px;
-            z-index: 1000;
-        }
-        
-        .ar-ui-button {
-            position: absolute;
-            padding: 12px 24px;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            border: none;
-            border-radius: 5px;
-            z-index: 1000;
-            font-size: 16px;
-        }
-        
-        #enter-ar {
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-        }
-        
-        #exit-ar {
-            top: 20px;
-            left: 20px;
-            display: none;
-        }
-        
-        #rotate-btn {
-            bottom: 80px;
-            right: 20px;
-            display: none;
-        }
-        
-        #scale-btn {
-            bottom: 140px;
-            right: 20px;
-            display: none;
-        }
-        
-        #move-btn {
-            bottom: 200px;
-            right: 20px;
-            display: none;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <title>AR Viewer - No Quick Look</title>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.3.0/dist/model-viewer.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 1rem;
+      font-family: Arial, sans-serif;
+      background: #f4f4f4;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .viewer-box {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      margin-bottom: 2rem;
+      padding: 1rem;
+      max-width: 400px;
+      width: 100%;
+    }
+    model-viewer {
+      width: 100%;
+      height: 400px;
+      border-radius: 12px;
+    }
+    .buttons {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 1rem;
+    }
+    .buttons button {
+      flex: 1;
+      margin: 0 4px;
+      padding: 0.6rem;
+      font-size: 0.9rem;
+      border: none;
+      border-radius: 8px;
+      background: #007bff;
+      color: white;
+      cursor: pointer;
+    }
+    .buttons button:hover {
+      background: #0056b3;
+    }
+  </style>
 </head>
 <body>
-    <div id="ar-container"></div>
-    <div id="loading">Loading AR experience...</div>
-    
-    <!-- Custom AR UI Controls -->
-    <button id="enter-ar" class="ar-ui-button">Start AR</button>
-    <button id="exit-ar" class="ar-ui-button">Exit AR</button>
-    <button id="rotate-btn" class="ar-ui-button">Rotate</button>
-    <button id="scale-btn" class="ar-ui-button">Scale</button>
-    <button id="move-btn" class="ar-ui-button">Move</button>
-    
-    <script>
-        // DOM elements
-        const container = document.getElementById('ar-container');
-        const loadingElement = document.getElementById('loading');
-        const enterARBtn = document.getElementById('enter-ar');
-        const exitARBtn = document.getElementById('exit-ar');
-        const rotateBtn = document.getElementById('rotate-btn');
-        const scaleBtn = document.getElementById('scale-btn');
-        const moveBtn = document.getElementById('move-btn');
-        
-        // Model URL - replace with your own model
-        const modelUrl = 'https://modelviewer.dev/shared-assets/models/Astronaut.glb';
-        
-        // Scene variables
-        let scene, camera, renderer, model;
-        let controller, hitTestSource = null;
-        let interactionMode = 'move'; // 'move', 'rotate', 'scale'
-        let modelAnchor = null;
-        
-        // Initialize Three.js scene
-        function initScene() {
-            scene = new THREE.Scene();
-            
-            // Camera will be updated by WebXR
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
-            
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
-            container.appendChild(renderer.domElement);
-            
-            // Add lights
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-            scene.add(ambientLight);
-            
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight.position.set(0, 10, 0);
-            scene.add(directionalLight);
-            
-            // Load 3D model
-            const loader = new THREE.GLTFLoader();
-            loader.load(modelUrl, (gltf) => {
-                model = gltf.scene;
-                model.scale.set(0.5, 0.5, 0.5);
-                model.visible = false; // Hide until placed in AR
-                scene.add(model);
-                loadingElement.style.display = 'none';
-                enterARBtn.style.display = 'block';
-            }, undefined, (error) => {
-                console.error('Error loading model:', error);
-                loadingElement.textContent = 'Error loading model. Please try again.';
-            });
-            
-            // Handle window resize
-            window.addEventListener('resize', () => {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-            });
-        }
-        
-        // Initialize AR session
-        async function initARSession() {
-            // Check if WebXR is available
-            if (!navigator.xr) {
-                loadingElement.textContent = 'WebXR not supported on this device';
-                return;
-            }
-            
-            // Request AR session
-            const session = await navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: ['hit-test', 'dom-overlay'],
-                domOverlay: { root: document.body }
-            });
-            
-            // Set up session
-            renderer.xr.setSession(session);
-            
-            // Create controller
-            controller = renderer.xr.getController(0);
-            scene.add(controller);
-            
-            // Handle session end
-            session.addEventListener('end', onSessionEnd);
-            
-            // Show AR container
-            container.style.display = 'block';
-            enterARBtn.style.display = 'none';
-            exitARBtn.style.display = 'block';
-            rotateBtn.style.display = 'block';
-            scaleBtn.style.display = 'block';
-            moveBtn.style.display = 'block';
-            
-            // Start animation loop
-            renderer.setAnimationLoop(onXRFrame);
-        }
-        
-        // XR Frame loop
-        function onXRFrame(time, frame) {
-            if (!frame) return;
-            
-            // Get hit test results
-            const referenceSpace = renderer.xr.getReferenceSpace();
-            const session = renderer.xr.getSession();
-            
-            if (!hitTestSource) {
-                session.requestReferenceSpace('viewer').then((refSpace) => {
-                    session.requestHitTestSource({ space: refSpace }).then((source) => {
-                        hitTestSource = source;
-                    });
-                });
-                return;
-            }
-            
-            const hitTestResults = frame.getHitTestResults(hitTestSource);
-            
-            if (hitTestResults.length > 0 && model) {
-                const hit = hitTestResults[0];
-                const pose = hit.getPose(referenceSpace);
-                
-                if (!modelAnchor) {
-                    modelAnchor = pose.transform;
-                    model.visible = true;
-                    model.position.set(0, 0, 0);
-                    model.quaternion.set(0, 0, 0, 1);
-                    model.updateMatrix();
-                    model.matrix.decompose(model.position, model.quaternion, model.scale);
-                    
-                    // Create a group to anchor the model
-                    const anchorGroup = new THREE.Group();
-                    anchorGroup.matrix.fromArray(pose.transform.matrix);
-                    anchorGroup.matrix.decompose(anchorGroup.position, anchorGroup.quaternion, anchorGroup.scale);
-                    anchorGroup.add(model);
-                    scene.add(anchorGroup);
-                }
-            }
-            
-            renderer.render(scene, camera);
-        }
-        
-        // Handle session end
-        function onSessionEnd() {
-            renderer.setAnimationLoop(null);
-            container.style.display = 'none';
-            enterARBtn.style.display = 'block';
-            exitARBtn.style.display = 'none';
-            rotateBtn.style.display = 'none';
-            scaleBtn.style.display = 'none';
-            moveBtn.style.display = 'none';
-            
-            if (model) {
-                model.visible = false;
-                if (model.parent) {
-                    scene.remove(model.parent);
-                }
-            }
-            
-            hitTestSource = null;
-            modelAnchor = null;
-        }
-        
-        // Set up button event listeners
-        enterARBtn.addEventListener('click', async () => {
-            try {
-                await initARSession();
-            } catch (error) {
-                console.error('AR session failed:', error);
-                loadingElement.textContent = 'Failed to start AR: ' + error.message;
-                loadingElement.style.display = 'block';
-            }
-        });
-        
-        exitARBtn.addEventListener('click', () => {
-            const session = renderer.xr.getSession();
-            if (session) {
-                session.end();
-            }
-        });
-        
-        rotateBtn.addEventListener('click', () => {
-            interactionMode = 'rotate';
-            rotateBtn.style.background = 'rgba(0,150,255,0.7)';
-            scaleBtn.style.background = 'rgba(0,0,0,0.7)';
-            moveBtn.style.background = 'rgba(0,0,0,0.7)';
-        });
-        
-        scaleBtn.addEventListener('click', () => {
-            interactionMode = 'scale';
-            rotateBtn.style.background = 'rgba(0,0,0,0.7)';
-            scaleBtn.style.background = 'rgba(0,150,255,0.7)';
-            moveBtn.style.background = 'rgba(0,0,0,0.7)';
-        });
-        
-        moveBtn.addEventListener('click', () => {
-            interactionMode = 'move';
-            rotateBtn.style.background = 'rgba(0,0,0,0.7)';
-            scaleBtn.style.background = 'rgba(0,0,0,0.7)';
-            moveBtn.style.background = 'rgba(0,150,255,0.7)';
-        });
-        
-        // Initialize the scene
-        initScene();
-        
-        // Add touch/mouse interaction handlers for model manipulation
-        function setupModelInteraction() {
-            // This would need more complex implementation for actual manipulation
-            // Currently just demonstrates the UI flow
-        }
-    </script>
+
+  <!-- MODEL 1 -->
+  <div class="viewer-box">
+    <model-viewer id="viewer1"
+      src="model1.glb"
+      camera-controls
+      ar
+      ar-modes="webxr scene-viewer"
+      shadow-intensity="1"
+      auto-rotate
+      touch-action="pan-y"
+      alt="3D Model 1">
+    </model-viewer>
+    <div class="buttons">
+      <button onclick="activateAR('viewer1')">View in AR</button>
+      <button onclick="window.open('https://example.com/info1')">Info</button>
+      <button onclick="window.open('https://example.com/form1')">Contact</button>
+    </div>
+  </div>
+
+  <!-- MODEL 2 -->
+  <div class="viewer-box">
+    <model-viewer id="viewer2"
+      src="model2.glb"
+      camera-controls
+      ar
+      ar-modes="webxr scene-viewer"
+      shadow-intensity="1"
+      auto-rotate
+      touch-action="pan-y"
+      alt="3D Model 2">
+    </model-viewer>
+    <div class="buttons">
+      <button onclick="activateAR('viewer2')">View in AR</button>
+      <button onclick="window.open('https://example.com/info2')">Info</button>
+      <button onclick="window.open('https://example.com/form2')">Contact</button>
+    </div>
+  </div>
+
+  <!-- MODEL 3 -->
+  <div class="viewer-box">
+    <model-viewer id="viewer3"
+      src="model3.glb"
+      camera-controls
+      ar
+      ar-modes="webxr scene-viewer"
+      shadow-intensity="1"
+      auto-rotate
+      touch-action="pan-y"
+      alt="3D Model 3">
+    </model-viewer>
+    <div class="buttons">
+      <button onclick="activateAR('viewer3')">View in AR</button>
+      <button onclick="window.open('https://example.com/info3')">Info</button>
+      <button onclick="window.open('https://example.com/form3')">Contact</button>
+    </div>
+  </div>
+
+  <script>
+    function activateAR(viewerId) {
+      const modelViewer = document.getElementById(viewerId);
+      if (modelViewer.canActivateAR) {
+        modelViewer.activateAR();
+      } else {
+        alert("AR is not available on this device/browser.");
+      }
+    }
+  </script>
+
 </body>
 </html>
