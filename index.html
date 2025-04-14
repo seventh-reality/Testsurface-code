@@ -1,157 +1,110 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <!-- Important for iOS Safari AR -->
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>AR Model Viewer with SLAM</title>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://unpkg.com/@google/model-viewer@2.1.1/dist/model-viewer.min.js" type="module"></script>
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            font-family: Arial, sans-serif;
-        }
-        
-        #ar-container {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            display: none; /* Initially hidden */
-        }
-        
-        #model-viewer-container {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-        }
-        
-        #loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            font-size: 20px;
-            background: rgba(0,0,0,0.7);
-            padding: 20px;
-            border-radius: 10px;
-            z-index: 1000;
-        }
-        
-        #switch-btn {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            padding: 10px 20px;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            border: none;
-            border-radius: 5px;
-            z-index: 1000;
-        }
-        
-        #back-btn {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            padding: 10px 20px;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            border: none;
-            border-radius: 5px;
-            z-index: 1000;
-            display: none;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <title>Custom AR Viewer</title>
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #f0f0f0;
+    }
+    .viewer-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 2rem;
+    }
+    model-viewer {
+      width: 100%;
+      max-width: 400px;
+      height: 400px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    }
+    .controls {
+      margin-top: 0.5rem;
+      display: flex;
+      gap: 10px;
+    }
+    button {
+      padding: 0.6rem 1rem;
+      border: none;
+      border-radius: 6px;
+      background-color: #007bff;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+  </style>
 </head>
 <body>
-    <!-- We'll use Model Viewer for both 3D and AR modes -->
-    <div id="model-viewer-container">
-        <model-viewer 
-            id="model-viewer"
-            ar
-            ar-modes="webxr scene-viewer quick-look"
-            camera-controls
-            auto-rotate
-            shadow-intensity="1"
-            style="width: 100%; height: 100%;"
-            src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
-            alt="3D model"
-            ar-scale="fixed"
-            touch-action="none">
-            <button id="ar-button" slot="ar-button" style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);">
-                View in AR
-            </button>
-        </model-viewer>
+
+  <div class="viewer-container">
+    <model-viewer id="model1"
+      src="model1.glb"
+      ar
+      ar-modes="webxr scene-viewer"
+      camera-controls
+      touch-action="pan-y"
+      shadow-intensity="1"
+      exposure="1"
+      auto-rotate>
+    </model-viewer>
+    <div class="controls">
+      <button onclick="enterAR('model1')">View in AR</button>
+      <button onclick="window.open('https://example.com/info1')">Info</button>
+      <button onclick="window.open('https://example.com/brochure1.pdf')">Brochure</button>
     </div>
-    
-    <div id="loading">Loading 3D experience...</div>
-    
-    <script>
-        // Check device compatibility
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-                     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        const isAndroid = /Android/.test(navigator.userAgent);
-        
-        const loadingElement = document.getElementById('loading');
-        const modelViewer = document.querySelector('#model-viewer');
-        
-        // Handle Model Viewer events
-        modelViewer.addEventListener('load', () => {
-            loadingElement.style.display = 'none';
-            console.log('Model loaded successfully');
-        });
-        
-        modelViewer.addEventListener('error', (event) => {
-            console.error('Model Viewer error:', event.detail);
-            loadingElement.textContent = 'Error: ' + (event.detail.message || 'Failed to load model');
-        });
-        
-        modelViewer.addEventListener('ar-status', (event) => {
-            console.log('AR Status:', event.detail.status);
-            if (event.detail.status === 'session-started') {
-                console.log('AR session started');
-                // Hide the 3D view controls when in AR
-                document.getElementById('ar-button').style.display = 'none';
-            } else if (event.detail.status === 'session-ended') {
-                console.log('AR session ended');
-                // Show the AR button again
-                document.getElementById('ar-button').style.display = 'block';
-            }
-        });
-        
-        // For iOS, we need to handle the Quick Look specific cases
-        if (isIOS) {
-            modelViewer.addEventListener('quick-look-button-tapped', () => {
-                console.log('Quick Look button tapped');
-            });
-            
-            modelViewer.addEventListener('quick-look-opened', () => {
-                console.log('Quick Look opened');
-            });
-            
-            modelViewer.addEventListener('quick-look-closed', () => {
-                console.log('Quick Look closed');
-            });
-        }
-        
-        // For Android, handle Scene Viewer cases
-        if (isAndroid) {
-            modelViewer.addEventListener('scene-viewer-ready', () => {
-                console.log('Scene Viewer ready');
-            });
-            
-            modelViewer.addEventListener('scene-viewer-failed', (event) => {
-                console.error('Scene Viewer failed:', event.detail);
-            });
-        }
-    </script>
+  </div>
+
+  <div class="viewer-container">
+    <model-viewer id="model2"
+      src="model2.glb"
+      ar
+      ar-modes="webxr scene-viewer"
+      camera-controls
+      touch-action="pan-y"
+      shadow-intensity="1"
+      auto-rotate>
+    </model-viewer>
+    <div class="controls">
+      <button onclick="enterAR('model2')">View in AR</button>
+      <button onclick="window.open('https://example.com/info2')">Info</button>
+      <button onclick="window.open('https://example.com/brochure2.pdf')">Brochure</button>
+    </div>
+  </div>
+
+  <div class="viewer-container">
+    <model-viewer id="model3"
+      src="model3.glb"
+      ar
+      ar-modes="webxr scene-viewer"
+      camera-controls
+      shadow-intensity="1"
+      auto-rotate>
+    </model-viewer>
+    <div class="controls">
+      <button onclick="enterAR('model3')">View in AR</button>
+      <button onclick="window.open('https://example.com/info3')">Info</button>
+      <button onclick="window.open('https://example.com/brochure3.pdf')">Brochure</button>
+    </div>
+  </div>
+
+  <script>
+    function enterAR(modelId) {
+      const viewer = document.getElementById(modelId);
+      if (viewer && viewer.canActivateAR) {
+        viewer.activateAR();
+      } else {
+        alert('AR not supported on this device/browser');
+      }
+    }
+  </script>
+
 </body>
 </html>
