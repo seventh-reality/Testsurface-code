@@ -158,6 +158,7 @@
     let initialRotation = 0;
     let modelBoundingBox = new THREE.Box3();
     let modelAnchor = null; // Reference space anchor for the model
+    let modelGroup = null; // Group to hold the model for stable positioning
 
     // Check for WebXR support
     async function checkXRSupport() {
@@ -276,6 +277,10 @@
         reticle = createReticle();
         scene.add(reticle);
         
+        // Create a group to hold the model for stable positioning
+        modelGroup = new THREE.Group();
+        scene.add(modelGroup);
+        
         // Load model with proper scaling
         const loader = new THREE.GLTFLoader();
         try {
@@ -295,7 +300,7 @@
           currentScale = scaleFactor;
           
           model.visible = false; // Start hidden until placed
-          scene.add(model);
+          modelGroup.add(model);
           
           console.log(`Model loaded with initial scale: ${scaleFactor.toFixed(2)}`);
         } catch (e) {
@@ -306,7 +311,7 @@
             new THREE.MeshStandardMaterial({ color: 0x00ff00 })
           );
           model.visible = false;
-          scene.add(model);
+          modelGroup.add(model);
         }
         
         // Start AR session
@@ -458,15 +463,15 @@
             const anchor = await frame.session.createAnchor(anchorPose, referenceSpace);
             modelAnchor = anchor;
             
-            // Position the model at the anchor's position
-            model.position.set(0, 0, 0);
+            // Position the model group at the anchor's position
+            modelGroup.position.set(0, 0, 0);
             model.visible = true;
             isModelPlaced = true;
             
-            // Add the model to the anchor's space
+            // Add the model group to the anchor's space
             const anchorGroup = new THREE.Group();
             anchorGroup.matrix.fromArray(anchor.anchorSpace.getTransformTo(referenceSpace).matrix);
-            anchorGroup.add(model);
+            anchorGroup.add(modelGroup);
             scene.add(anchorGroup);
             
             // Change reticle color to indicate placement
@@ -480,8 +485,8 @@
           } catch (e) {
             console.error("Failed to create anchor:", e);
             // Fallback to non-anchored placement
-            model.position.setFromMatrixPosition(reticle.matrix);
-            model.quaternion.setFromRotationMatrix(reticle.matrix);
+            modelGroup.position.setFromMatrixPosition(reticle.matrix);
+            modelGroup.quaternion.setFromRotationMatrix(reticle.matrix);
             model.visible = true;
             isModelPlaced = true;
           }
@@ -516,7 +521,7 @@
       
       hammerManager.on("panstart", (e) => {
         if (isModelPlaced) {
-          lastPosition.copy(model.position);
+          lastPosition.copy(modelGroup.position);
         }
       });
       
@@ -541,9 +546,9 @@
               modelAnchor.anchorSpace.getTransformTo(renderer.xr.getReferenceSpace()).matrix
             );
             const worldPosition = position.clone().sub(new THREE.Vector3().setFromMatrixPosition(anchorMatrix));
-            model.position.copy(worldPosition);
+            modelGroup.position.copy(worldPosition);
           } else {
-            model.position.copy(position);
+            modelGroup.position.copy(position);
           }
         }
       });
@@ -564,13 +569,13 @@
       
       hammerManager.on("rotatestart", (e) => {
         if (isModelPlaced) {
-          initialRotation = model.rotation.y;
+          initialRotation = modelGroup.rotation.y;
         }
       });
       
       hammerManager.on("rotate", (e) => {
         if (isModelPlaced) {
-          model.rotation.y = initialRotation + e.rotation * (Math.PI / 180);
+          modelGroup.rotation.y = initialRotation + e.rotation * (Math.PI / 180);
         }
       });
     }
