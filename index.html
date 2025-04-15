@@ -3,18 +3,28 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0">
-    <title>Advanced SLAM AR with Surface Mesh & Object Interaction</title>
+    <title>Basic AR Surface Detection</title>
     <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/aframe-ar@1.7.0/dist/aframe-ar.min.js"></script>
     <style>
         body {
             margin: 0;
             overflow: hidden;
-            font-family: 'Segoe UI', Arial, sans-serif;
-            touch-action: none;
-            background-color: #000;
+            font-family: Arial, sans-serif;
+        }
+        
+        #reticle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 40px;
+            height: 40px;
+            margin-left: -20px;
+            margin-top: -20px;
+            border: 2px solid rgba(0, 255, 255, 0.8);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 99;
         }
         
         #info {
@@ -23,320 +33,43 @@
             width: 100%;
             text-align: center;
             color: white;
-            background: rgba(0,0,0,0.7);
-            padding: 12px 0;
-            z-index: 100;
-            font-size: 16px;
-            backdrop-filter: blur(8px);
-            border-bottom: 1px solid rgba(255,255,255,0.3);
-            font-weight: 500;
-        }
-        
-        #reticle {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 60px;
-            height: 60px;
-            margin-left: -30px;
-            margin-top: -30px;
-            border: 3px solid rgba(0, 255, 255, 0.9);
-            border-radius: 50%;
-            pointer-events: none;
-            z-index: 99;
-            transition: all 0.1s ease-out;
-            display: none;
-            box-shadow: 0 0 20px rgba(0, 255, 255, 0.7);
-            background: radial-gradient(circle, rgba(0,255,255,0.2) 0%, rgba(0,255,255,0) 70%);
-        }
-        
-        #loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            font-size: 20px;
-            background: rgba(0,0,0,0.85);
-            padding: 30px 40px;
-            border-radius: 20px;
-            z-index: 100;
-            text-align: center;
-            max-width: 80%;
-            backdrop-filter: blur(15px);
-            border: 1px solid rgba(255,255,255,0.2);
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-        }
-        
-        #loading-progress {
-            width: 100%;
-            height: 6px;
-            background: rgba(255,255,255,0.2);
-            border-radius: 3px;
-            margin-top: 20px;
-            overflow: hidden;
-        }
-        
-        #loading-progress-bar {
-            height: 100%;
-            width: 0%;
-            background: linear-gradient(90deg, #00ffff, #0088ff);
-            transition: width 0.3s ease;
-            border-radius: 3px;
-        }
-        
-        #controls {
-            position: absolute;
-            bottom: 25px;
-            left: 0;
-            width: 100%;
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-            z-index: 100;
-            flex-wrap: wrap;
-        }
-        
-        .control-button {
-            padding: 14px 28px;
-            background: linear-gradient(145deg, rgba(0,150,255,0.9), rgba(0,80,200,0.9));
-            color: white;
-            border: none;
-            border-radius: 30px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            box-shadow: 0 6px 12px rgba(0,0,0,0.3);
-            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-            min-width: 140px;
-            text-align: center;
-            backdrop-filter: blur(8px);
-            border: 1px solid rgba(255,255,255,0.15);
-        }
-        
-        .control-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 16px rgba(0,0,0,0.4);
-        }
-        
-        .control-button:active {
-            transform: translateY(1px);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        }
-        
-        #toggle-mesh-button {
-            background: linear-gradient(145deg, rgba(100,255,100,0.9), rgba(0,180,0,0.9));
-        }
-        
-        #object-selector {
-            position: absolute;
-            bottom: 100px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            gap: 15px;
-            z-index: 100;
-            display: none;
-        }
-        
-        .object-option {
-            width: 60px;
-            height: 60px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: all 0.3s;
-            border: 2px solid transparent;
-            backdrop-filter: blur(5px);
-        }
-        
-        .object-option:hover {
-            background: rgba(255,255,255,0.2);
-            transform: translateY(-5px);
-        }
-        
-        .object-option.selected {
-            border-color: #00ffff;
-            box-shadow: 0 0 15px rgba(0,255,255,0.5);
-            background: rgba(0,255,255,0.1);
-        }
-        
-        .object-option img {
-            width: 80%;
-            height: 80%;
-            object-fit: contain;
-        }
-        
-        #debug-info {
-            position: absolute;
-            top: 60px;
-            left: 10px;
-            color: white;
             background: rgba(0,0,0,0.5);
             padding: 10px;
-            border-radius: 5px;
-            font-family: monospace;
-            font-size: 12px;
             z-index: 100;
-            display: none;
-        }
-        
-        a-scene {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-        }
-        
-        #instruction {
-            position: absolute;
-            bottom: 180px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: white;
-            background: rgba(0,0,0,0.7);
-            padding: 12px 20px;
-            border-radius: 20px;
-            font-size: 16px;
-            z-index: 100;
-            text-align: center;
-            max-width: 80%;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.2);
-            display: none;
-            animation: pulse 2s infinite;
-        }
-        
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(0,255,255,0.4); }
-            70% { box-shadow: 0 0 0 15px rgba(0,255,255,0); }
-            100% { box-shadow: 0 0 0 0 rgba(0,255,255,0); }
-        }
-        
-        /* Plane visualization */
-        .arjs-plane {
-            opacity: 0.5;
-            transition: opacity 0.5s ease;
-        }
-        
-        .arjs-plane:hover {
-            opacity: 0.9;
         }
     </style>
 </head>
 <body>
-    <div id="info">Advanced SLAM AR with Surface Mesh & Object Interaction</div>
+    <div id="info">Move your device to detect surfaces. Tap to place object.</div>
     <div id="reticle"></div>
-    <div id="loading">
-        Initializing AR experience...
-        <div id="loading-progress">
-            <div id="loading-progress-bar"></div>
-        </div>
-    </div>
-    
-    <div id="instruction">Move your device to detect surfaces</div>
-    
-    <div id="object-selector">
-        <div class="object-option" data-model="duck">
-            <img src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Duck/glTF/Duck.jpg" alt="Duck">
-        </div>
-        <div class="object-option" data-model="chair">
-            <img src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Chair/glTF/Chair.jpg" alt="Chair">
-        </div>
-        <div class="object-option" data-model="avocado">
-            <img src="https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@2.0/./Avocado/glTF/screenshot/screenshot.jpg" alt="Avocado">
-        </div>
-    </div>
-    
-    <div id="debug-info"></div>
-    
-    <div id="controls">
-        <button id="start-button" class="control-button">Start AR</button>
-        <button id="place-button" class="control-button" style="display: none;">Place Object</button>
-        <button id="toggle-mesh-button" class="control-button" style="display: none;">Show Surface Mesh</button>
-        <button id="clear-button" class="control-button" style="display: none;">Clear Scene</button>
-    </div>
 
-    <!-- A-Frame Scene -->
     <a-scene 
         vr-mode-ui="enabled: false"
-        renderer="logarithmicDepthBuffer: true; precision: high; antialias: true; colorManagement: true;"
-        embedded 
-        arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+        arjs="sourceType: webcam; trackingMethod: best; debugUIEnabled: false;"
+        renderer="logarithmicDepthBuffer: true;"
+        embedded
     >
-        <!-- Camera -->
-        <a-entity camera></a-entity>
-        
-        <!-- Enhanced Lighting -->
-        <a-entity light="type: ambient; color: #888; intensity: 0.6"></a-entity>
-        <a-entity light="type: directional; color: #fff; intensity: 1.0; position: 1 3 2" shadow="castShadow: true; shadowMapWidth: 2048; shadowMapHeight: 2048;"></a-entity>
-        <a-entity light="type: hemisphere; color: #ffffff; groundColor: #808080; intensity: 0.5"></a-entity>
+        <a-camera gps-camera rotation-reader></a-camera>
         
         <!-- This will be our dynamic content -->
         <a-entity id="dynamic-content"></a-entity>
-        
-        <!-- Ground plane for better depth perception -->
-        <a-entity id="ground-plane" geometry="primitive: plane; width: 100; height: 100" rotation="-90 0 0" material="color: #333333; opacity: 0.5; transparent: true; visible: false"></a-entity>
         
         <!-- AR.js plane detection -->
         <a-entity id="arjs-planes"></a-entity>
     </a-scene>
 
     <script>
-        // Wait for A-Frame to be ready
-        window.addEventListener('load', async () => {
+        document.addEventListener('DOMContentLoaded', () => {
             const scene = document.querySelector('a-scene');
             const reticle = document.getElementById('reticle');
-            const loading = document.getElementById('loading');
-            const loadingProgress = document.getElementById('loading-progress-bar');
-            const startButton = document.getElementById('start-button');
-            const placeButton = document.getElementById('place-button');
-            const clearButton = document.getElementById('clear-button');
-            const toggleMeshButton = document.getElementById('toggle-mesh-button');
             const dynamicContent = document.getElementById('dynamic-content');
-            const groundPlane = document.getElementById('ground-plane');
-            const objectSelector = document.getElementById('object-selector');
-            const instruction = document.getElementById('instruction');
-            const debugInfo = document.getElementById('debug-info');
             const arjsPlanes = document.getElementById('arjs-planes');
             
-            // Model options
-            const modelOptions = {
-                duck: 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Duck/glTF/Duck.gltf',
-                chair: 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Chair/glTF/Chair.gltf',
-                avocado: 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@2.0/./Avocado/glTF/Avocado.gltf'
-            };
-            
-            // Track AR state
-            let modelPlaced = false;
-            let showSurfaceMesh = false;
-            let selectedModel = 'duck';
-            let debugMode = false;
-            let trackingStarted = false;
-            let placedObjects = [];
-            let lastIntersection = null;
-            
-            // Initialize AR session with enhanced features
-            async function initARSession() {
-                loading.textContent = "Initializing AR...";
-                loadingProgress.style.width = '20%';
+            // Wait for scene to be ready
+            scene.addEventListener('loaded', () => {
+                const arSystem = scene.systems['arjs'];
                 
-                // Wait for scene to be ready
-                await new Promise(resolve => {
-                    if (scene.hasLoaded) resolve();
-                    else scene.addEventListener('loaded', resolve);
-                });
-                
-                loadingProgress.style.width = '40%';
-                
-                // Get the Three.js renderer and camera
-                const renderer = scene.renderer;
-                const camera = scene.camera;
-                
-                // Configure AR.js for better plane detection
-                const arSystem = scene.systems["arjs"];
+                // Configure AR session
                 arSystem._arSession.configure({
                     lightEstimationEnabled: true,
                     planeDetection: {
@@ -345,291 +78,49 @@
                     }
                 });
                 
-                // Show UI elements
-                reticle.style.display = 'block';
-                placeButton.style.display = 'block';
-                toggleMeshButton.style.display = 'block';
-                clearButton.style.display = 'block';
-                objectSelector.style.display = 'flex';
-                instruction.style.display = 'block';
-                
-                // Start animation loop with enhanced tracking
-                renderer.setAnimationLoop(function(timestamp, frame) {
-                    if (!frame) return;
-                    
-                    if (!trackingStarted) {
-                        trackingStarted = true;
-                        loading.textContent = "Tracking started!";
-                        setTimeout(() => {
-                            loading.style.display = 'none';
-                        }, 1000);
-                    }
-                    
-                    // Update debug info
-                    if (debugMode) {
-                        const cameraPos = camera.getWorldPosition(new THREE.Vector3());
-                        debugInfo.innerHTML = `Camera Position:<br>
-                            X: ${cameraPos.x.toFixed(2)}<br>
-                            Y: ${cameraPos.y.toFixed(2)}<br>
-                            Z: ${cameraPos.z.toFixed(2)}<br>
-                            FPS: ${Math.round(renderer.info.render.frameRate)}`;
-                    }
-                    
-                    // Handle plane detection and hit testing
-                    if (!modelPlaced) {
-                        // Get the AR.js hit testing results
-                        const hitTestResults = arSystem._hitTesting.getResults();
-                        
-                        if (hitTestResults.length > 0) {
-                            const hit = hitTestResults[0];
-                            lastIntersection = hit;
-                            
-                            // Update reticle position and appearance
-                            const position = hit.position;
-                            const point = new THREE.Vector3(position.x, position.y, position.z);
-                            
-                            // Convert to screen coordinates for reticle
-                            const vector = point.clone().project(camera);
-                            vector.x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-                            vector.y = -(vector.y * 0.5 - 0.5) * window.innerHeight;
-                            
-                            reticle.style.left = `${vector.x}px`;
-                            reticle.style.top = `${vector.y}px`;
-                            reticle.style.borderColor = 'rgba(0, 255, 255, 0.9)';
-                            reticle.style.boxShadow = '0 0 20px rgba(0, 255, 255, 0.7)';
-                            reticle.style.transform = 'scale(1.1)';
-                        } else {
-                            reticle.style.borderColor = 'rgba(255, 255, 0, 0.6)';
-                            reticle.style.boxShadow = '0 0 10px rgba(255, 255, 0, 0.4)';
-                            reticle.style.transform = 'scale(1)';
-                        }
-                    }
-                });
-                
-                // Listen for plane detection events
+                // Add plane detection visualization
                 arSystem.addEventListener('planeAdded', (event) => {
                     const plane = event.detail.plane;
-                    
-                    // Create a visual representation of the plane
                     const planeEntity = document.createElement('a-entity');
+                    
                     planeEntity.setAttribute('geometry', {
                         primitive: 'plane',
                         width: plane.width,
                         height: plane.height
                     });
+                    
                     planeEntity.setAttribute('position', plane.position);
                     planeEntity.setAttribute('rotation', plane.rotation);
                     planeEntity.setAttribute('material', {
                         color: '#00ffff',
-                        opacity: 0.3,
+                        opacity: 0.5,
                         transparent: true,
                         shader: 'flat'
                     });
-                    planeEntity.classList.add('arjs-plane');
-                    
-                    // Only show if mesh visualization is enabled
-                    planeEntity.setAttribute('visible', showSurfaceMesh);
                     
                     arjsPlanes.appendChild(planeEntity);
                 });
                 
-                // Update plane visuals when they change
-                arSystem.addEventListener('planeUpdated', (event) => {
-                    const plane = event.detail.plane;
-                    const planeEntity = event.detail.object3d;
+                // Handle tap to place object
+                scene.addEventListener('click', (evt) => {
+                    // Get hit test results
+                    const hitTestResults = arSystem._hitTesting.getResults();
                     
-                    if (planeEntity) {
-                        planeEntity.setAttribute('geometry', {
-                            primitive: 'plane',
-                            width: plane.width,
-                            height: plane.height
-                        });
-                        planeEntity.setAttribute('position', plane.position);
-                        planeEntity.setAttribute('rotation', plane.rotation);
+                    if (hitTestResults.length > 0) {
+                        const hit = hitTestResults[0];
+                        const position = hit.position;
+                        
+                        // Create a simple box at the hit position
+                        const box = document.createElement('a-box');
+                        box.setAttribute('position', position);
+                        box.setAttribute('color', '#4CC3D9');
+                        box.setAttribute('scale', '0.2 0.2 0.2');
+                        box.setAttribute('shadow', 'cast: true; receive: true');
+                        
+                        dynamicContent.appendChild(box);
                     }
-                });
-                
-                loadingProgress.style.width = '100%';
-                setTimeout(() => {
-                    loading.style.display = 'none';
-                }, 500);
-            }
-            
-            // Toggle surface mesh visualization
-            function toggleSurfaceMesh() {
-                showSurfaceMesh = !showSurfaceMesh;
-                
-                // Toggle visibility of all detected planes
-                const planes = arjsPlanes.querySelectorAll('.arjs-plane');
-                planes.forEach(plane => {
-                    plane.setAttribute('visible', showSurfaceMesh);
-                });
-                
-                if (showSurfaceMesh) {
-                    toggleMeshButton.textContent = 'Hide Mesh';
-                    toggleMeshButton.style.background = 'linear-gradient(145deg, rgba(255,100,100,0.9), rgba(200,50,50,0.9))';
-                    groundPlane.setAttribute('visible', 'true');
-                } else {
-                    toggleMeshButton.textContent = 'Show Mesh';
-                    toggleMeshButton.style.background = 'linear-gradient(145deg, rgba(100,255,100,0.9), rgba(0,180,0,0.9))';
-                    groundPlane.setAttribute('visible', 'false');
-                }
-            }
-            
-            // Enhanced model placement with physics and interaction
-            function placeModel() {
-                if (!lastIntersection) return;
-                
-                // Get position and rotation from intersection
-                const position = lastIntersection.position;
-                const rotation = new THREE.Quaternion();
-                rotation.setFromUnitVectors(
-                    new THREE.Vector3(0, 1, 0),
-                    lastIntersection.face.normal
-                );
-                
-                // Create model entity with enhanced features
-                const model = document.createElement('a-entity');
-                model.setAttribute('gltf-model', `url(${modelOptions[selectedModel]})`);
-                model.setAttribute('scale', '0.01 0.01 0.01');
-                model.setAttribute('position', position);
-                model.setAttribute('rotation', new THREE.Euler().setFromQuaternion(rotation));
-                
-                // Add animation for placement
-                model.setAttribute('animation', {
-                    property: 'scale',
-                    from: '0.01 0.01 0.01',
-                    to: '0.5 0.5 0.5',
-                    dur: 800,
-                    easing: 'easeOutElastic'
-                });
-                
-                // Add interaction capabilities
-                model.setAttribute('class', 'interactable');
-                model.setAttribute('clickable', '');
-                
-                dynamicContent.appendChild(model);
-                placedObjects.push(model);
-                modelPlaced = true;
-                reticle.style.display = 'none';
-                instruction.style.display = 'none';
-                
-                // Add click interaction
-                model.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    
-                    // Toggle rotation animation
-                    if (model.getAttribute('animation__rotation')) {
-                        model.removeAttribute('animation__rotation');
-                    } else {
-                        model.setAttribute('animation__rotation', {
-                            property: 'rotation',
-                            to: '0 360 0',
-                            dur: 5000,
-                            loop: true,
-                            easing: 'linear'
-                        });
-                    }
-                });
-                
-                // Allow dragging for repositioning
-                model.addEventListener('mousedown', (e) => {
-                    e.stopPropagation();
-                    model.setAttribute('animation__scale', {
-                        property: 'scale',
-                        to: '0.6 0.6 0.6',
-                        dur: 200,
-                        easing: 'easeOutQuad'
-                    });
-                });
-                
-                model.addEventListener('mouseup', (e) => {
-                    e.stopPropagation();
-                    model.setAttribute('animation__scale', {
-                        property: 'scale',
-                        to: '0.5 0.5 0.5',
-                        dur: 200,
-                        easing: 'easeOutQuad'
-                    });
-                });
-                
-                // Reset placement state after a short delay
-                setTimeout(() => {
-                    modelPlaced = false;
-                    reticle.style.display = 'block';
-                }, 1000);
-            }
-            
-            // Clear all placed objects
-            function clearScene() {
-                placedObjects.forEach(obj => {
-                    if (obj.parentNode) {
-                        obj.parentNode.removeChild(obj);
-                    }
-                });
-                placedObjects = [];
-                modelPlaced = false;
-                reticle.style.display = 'block';
-                instruction.style.display = 'block';
-            }
-            
-            // Toggle debug mode
-            function toggleDebugMode() {
-                debugMode = !debugMode;
-                debugInfo.style.display = debugMode ? 'block' : 'none';
-            }
-            
-            // Event listeners
-            startButton.addEventListener('click', initARSession);
-            placeButton.addEventListener('click', placeModel);
-            toggleMeshButton.addEventListener('click', toggleSurfaceMesh);
-            clearButton.addEventListener('click', clearScene);
-            
-            // Object selection
-            document.querySelectorAll('.object-option').forEach(option => {
-                option.addEventListener('click', () => {
-                    document.querySelectorAll('.object-option').forEach(opt => {
-                        opt.classList.remove('selected');
-                    });
-                    option.classList.add('selected');
-                    selectedModel = option.dataset.model;
                 });
             });
-            
-            // Set default selected model
-            document.querySelector(`.object-option[data-model="${selectedModel}"]`).classList.add('selected');
-            
-            // Handle screen taps
-            document.addEventListener('click', (e) => {
-                if (!modelPlaced && e.target === document.body) {
-                    placeModel();
-                }
-            });
-            
-            // Debug shortcut
-            document.addEventListener('keydown', (e) => {
-                if (e.key === 'd') toggleDebugMode();
-            });
-            
-            // Check for WebXR support with enhanced detection
-            if (navigator.xr) {
-                navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
-                    if (supported) {
-                        startButton.style.display = 'block';
-                        loading.textContent = "Ready to start AR experience";
-                        loadingProgress.style.width = '10%';
-                    } else {
-                        loading.textContent = "AR not supported on your device";
-                        loadingProgress.style.width = '100%';
-                    }
-                }).catch(error => {
-                    console.error("XR support check failed:", error);
-                    loading.textContent = "Error checking AR support";
-                });
-            } else {
-                loading.textContent = "WebXR not supported in your browser";
-                loadingProgress.style.width = '100%';
-            }
         });
     </script>
 </body>
