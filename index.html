@@ -2,677 +2,154 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Custom AR Model Viewer</title>
-    <!-- Fixed Three.js CDN URLs -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.min.js"></script>
-    <!-- Fixed WebXR Polyfill URL -->
-    <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@2.0.4/build/webxr-polyfill.min.js"></script>
-    <!-- Model Viewer as fallback -->
-    <script type="module" src="https://unpkg.com/@google/model-viewer@^2.1.1/dist/model-viewer.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Model Viewer</title>
     <style>
         body {
             margin: 0;
             padding: 0;
-            overflow: hidden;
-            font-family: Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
             background-color: #f0f0f0;
-        }
-        
-        #ar-container {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            display: none;
-        }
-        
-        #loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            font-size: 20px;
-            background: rgba(0,0,0,0.7);
-            padding: 20px;
-            border-radius: 10px;
-            z-index: 1000;
             text-align: center;
         }
         
-        .ar-ui-button {
-            position: absolute;
-            padding: 12px 24px;
-            background: rgba(0,0,0,0.7);
+        #container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        h1 {
+            color: #333;
+        }
+        
+        #ar-button {
+            background: #007AFF;
             color: white;
             border: none;
-            border-radius: 5px;
-            z-index: 1000;
-            font-size: 16px;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 18px;
             cursor: pointer;
+            margin: 20px 0;
+            display: inline-block;
         }
         
-        #enter-ar {
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: none;
-        }
-        
-        #exit-ar {
-            top: 20px;
-            left: 20px;
-            display: none;
-        }
-        
-        #rotate-btn {
-            bottom: 80px;
-            right: 20px;
-            display: none;
-        }
-        
-        #scale-btn {
-            bottom: 140px;
-            right: 20px;
-            display: none;
-        }
-        
-        #move-btn {
-            bottom: 200px;
-            right: 20px;
-            display: none;
+        #ar-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
         }
         
         #unsupported {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: black;
-            font-size: 18px;
-            text-align: center;
-            padding: 20px;
+            color: #d9534f;
             display: none;
+            margin-top: 20px;
         }
         
-        #permission-prompt {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(0,0,0,0.8);
-            color: white;
-            padding: 20px;
-            border-radius: 10px;
-            text-align: center;
+        #loading {
             display: none;
-            z-index: 1001;
+            margin-top: 20px;
         }
         
-        #permission-prompt button {
-            background: #4CAF50;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            margin: 10px 5px;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        
-        /* Model Viewer fallback styles */
-        model-viewer {
-            width: 100%;
-            height: 100%;
-            display: none;
-        }
-        
-        #model-viewer-fallback {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            display: none;
-        }
-        
-        #use-fallback {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: none;
+        .instructions {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
     </style>
+    <!-- Model Viewer for AR Quick Look -->
+    <script type="module" src="https://unpkg.com/@google/model-viewer@^2.1.1/dist/model-viewer.min.js"></script>
 </head>
 <body>
-    <div id="ar-container"></div>
-    <div id="loading">Loading AR experience...</div>
-    <div id="unsupported"></div>
-    <div id="permission-prompt">
-        <p>This app needs camera permission to work with AR.</p>
-        <button id="grant-permission">Grant Permission</button>
-        <button id="deny-permission">Deny</button>
-    </div>
-    
-    <!-- Model Viewer fallback for iOS -->
-    <div id="model-viewer-fallback">
+    <div id="container">
+        <h1>AR Model Viewer</h1>
+        <p>View 3D models in augmented reality on your iPhone</p>
+        
+        <!-- Model Viewer element -->
         <model-viewer 
             id="model-viewer"
-            ar 
-            ar-modes="scene-viewer quick-look" 
-            ar-scale="auto"
-            camera-controls 
-            src="https://modelviewer.dev/shared-assets/models/Astronaut.glb">
+            src="https://cdn.glitch.me/5d19e017-1621-4c8e-9c1b-8a1c6a0d1b3f%2FAstronaut.glb?v=1636390891856"
+            ar
+            ar-modes="quick-look"
+            camera-controls
+            auto-rotate
+            style="width: 100%; height: 400px; display: none;">
         </model-viewer>
+        
+        <button id="ar-button">View in AR</button>
+        
+        <div id="loading">Loading AR experience...</div>
+        <div id="unsupported">AR is not supported on your device</div>
+        
+        <div class="instructions">
+            <h3>How to use:</h3>
+            <p>1. Tap "View in AR" button</p>
+            <p>2. Point your camera at a flat surface</p>
+            <p>3. Tap to place the model</p>
+            <p>4. Move around to view from different angles</p>
+        </div>
     </div>
-    
-    <!-- Custom AR UI Controls -->
-    <button id="enter-ar" class="ar-ui-button">Start AR</button>
-    <button id="exit-ar" class="ar-ui-button">Exit AR</button>
-    <button id="rotate-btn" class="ar-ui-button">Rotate</button>
-    <button id="scale-btn" class="ar-ui-button">Scale</button>
-    <button id="move-btn" class="ar-ui-button">Move</button>
-    <button id="use-fallback" class="ar-ui-button">Use AR Quick Look</button>
-    
-    <script>
-        // Initialize WebXR Polyfill with iOS specific settings
-        const polyfill = new WebXRPolyfill({
-            global: window,
-            allowCardboardOnDesktop: false,
-            cardboardConfig: {
-                isMobile: true,
-                isDaydreamReady: false
-            }
-        });
 
-        // DOM elements
-        const container = document.getElementById('ar-container');
-        const loadingElement = document.getElementById('loading');
-        const unsupportedElement = document.getElementById('unsupported');
-        const permissionPrompt = document.getElementById('permission-prompt');
-        const grantPermissionBtn = document.getElementById('grant-permission');
-        const denyPermissionBtn = document.getElementById('deny-permission');
-        const enterARBtn = document.getElementById('enter-ar');
-        const exitARBtn = document.getElementById('exit-ar');
-        const rotateBtn = document.getElementById('rotate-btn');
-        const scaleBtn = document.getElementById('scale-btn');
-        const moveBtn = document.getElementById('move-btn');
-        const fallbackViewer = document.getElementById('model-viewer-fallback');
-        const useFallbackBtn = document.getElementById('use-fallback');
-        
-        // Model URL - using a reliable model source
-        const modelUrl = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Duck/glTF/Duck.gltf';
-        
-        // Scene variables
-        let scene, camera, renderer, model;
-        let controller, hitTestSource = null;
-        let interactionMode = 'move'; // 'move', 'rotate', 'scale'
-        let modelAnchor = null;
-        let modelGroup = null;
-        let isARSessionActive = false;
-        let lastTapTime = 0;
-        let hasRequestedPermission = false;
-        let isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        
-        // Check for WebXR support
-        async function checkXRSupport() {
-            if (!navigator.xr) {
-                if (isIOS) {
-                    // On iOS, show the fallback option
-                    useFallbackBtn.style.display = 'block';
-                    loadingElement.style.display = 'none';
-                    return false;
-                }
-                showUnsupported("WebXR is not supported in your browser. Try using Chrome or Safari on a newer device.");
-                return false;
-            }
-            
-            try {
-                const supported = await navigator.xr.isSessionSupported('immersive-ar');
-                if (!supported) {
-                    if (isIOS) {
-                        // On iOS, show the fallback option
-                        useFallbackBtn.style.display = 'block';
-                        loadingElement.style.display = 'none';
-                        return false;
-                    }
-                    showUnsupported("AR is not supported on your device or browser.");
-                    return false;
-                }
-                return true;
-            } catch (error) {
-                console.error("Error checking AR support:", error);
-                if (isIOS) {
-                    useFallbackBtn.style.display = 'block';
-                    loadingElement.style.display = 'none';
-                    return false;
-                }
-                showUnsupported("Error checking AR support on your device.");
-                return false;
-            }
-        }
-        
-        function showUnsupported(message) {
-            loadingElement.style.display = 'none';
-            unsupportedElement.style.display = 'block';
-            unsupportedElement.textContent = message;
-        }
-        
-        // Check camera permissions
-        async function checkCameraPermission() {
-            try {
-                // This is a workaround for Android devices
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                stream.getTracks().forEach(track => track.stop());
-                return true;
-            } catch (error) {
-                console.log("Camera permission denied:", error);
-                return false;
-            }
-        }
-        
-        function showPermissionPrompt() {
-            permissionPrompt.style.display = 'block';
-            loadingElement.style.display = 'none';
-        }
-        
-        // Initialize Three.js scene
-        function initScene() {
-            scene = new THREE.Scene();
-            
-            // Camera will be updated by WebXR
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
-            
-            renderer = new THREE.WebGLRenderer({ 
-                antialias: true, 
-                alpha: true,
-                preserveDrawingBuffer: true, // Needed for some Android devices
-                powerPreference: "high-performance"
-            });
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
-            renderer.xr.setReferenceSpaceType('local');
-            container.appendChild(renderer.domElement);
-            
-            // Add lights
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-            scene.add(ambientLight);
-            
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight.position.set(0, 10, 0);
-            scene.add(directionalLight);
-            
-            // Load 3D model - using a more reliable model source
-            const loader = new THREE.GLTFLoader();
-            loader.load(modelUrl, (gltf) => {
-                model = gltf.scene;
-                model.scale.set(0.5, 0.5, 0.5);
-                model.visible = false; // Hide until placed in AR
-                
-                // Create a group for the model to allow transformations
-                modelGroup = new THREE.Group();
-                modelGroup.add(model);
-                scene.add(modelGroup);
-                
-                loadingElement.style.display = 'none';
-                
-                // Check for AR support after model loads
-                checkXRSupport().then((supported) => {
-                    if (supported) {
-                        enterARBtn.style.display = 'block';
-                    }
-                });
-            }, undefined, (error) => {
-                console.error('Error loading model:', error);
-                loadingElement.textContent = 'Error loading model. Please try again.';
-            });
-            
-            // Handle window resize
-            window.addEventListener('resize', () => {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-            });
-            
-            // Add touch event listeners for model manipulation
-            setupModelInteraction();
-        }
-        
-        // Initialize AR session
-        async function initARSession() {
-            try {
-                // Check if WebXR is available
-                if (!navigator.xr) {
-                    throw new Error('WebXR not supported on this device');
-                }
-                
-                // For Android devices, check camera permission first
-                if (!hasRequestedPermission) {
-                    const hasPermission = await checkCameraPermission();
-                    if (!hasPermission) {
-                        showPermissionPrompt();
-                        return;
-                    }
-                    hasRequestedPermission = true;
-                }
-                
-                // Request AR session with appropriate options
-                const sessionInit = { 
-                    requiredFeatures: ['hit-test'],
-                    optionalFeatures: ['dom-overlay', 'local-floor']
-                };
-                
-                // Add dom-overlay if supported
-                if ('xr' in navigator && navigator.xr.isSessionSupported('immersive-ar', {domOverlay: {root: document.body}})) {
-                    sessionInit.domOverlay = { root: document.body };
-                }
-                
-                const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
-                
-                // Set up session
-                renderer.xr.setSession(session);
-                
-                // Create controller
-                controller = renderer.xr.getController(0);
-                scene.add(controller);
-                
-                // Handle session end
-                session.addEventListener('end', onSessionEnd);
-                
-                // Show AR container
-                container.style.display = 'block';
-                enterARBtn.style.display = 'none';
-                exitARBtn.style.display = 'block';
-                rotateBtn.style.display = 'block';
-                scaleBtn.style.display = 'block';
-                moveBtn.style.display = 'block';
-                permissionPrompt.style.display = 'none';
-                useFallbackBtn.style.display = 'none';
-                
-                // Highlight the current interaction mode
-                updateInteractionUI();
-                
-                isARSessionActive = true;
-                
-                // Start animation loop
-                renderer.setAnimationLoop(onXRFrame);
-            } catch (error) {
-                console.error('AR session failed:', error);
-                loadingElement.textContent = 'Failed to start AR: ' + error.message;
-                loadingElement.style.display = 'block';
-                enterARBtn.style.display = 'block';
-                permissionPrompt.style.display = 'none';
-                
-                // For iOS, show fallback option
-                if (isIOS) {
-                    useFallbackBtn.style.display = 'block';
-                }
-                
-                // For iOS, sometimes we need to try again
-                if (error.message.includes('Requested device not found') || 
-                    error.message.includes('Session creation failed')) {
-                    setTimeout(() => {
-                        loadingElement.textContent = 'Trying again to start AR...';
-                        initARSession();
-                    }, 1000);
-                }
-            }
-        }
-        
-        // XR Frame loop
-        function onXRFrame(time, frame) {
-            if (!frame) return;
-            
-            // Get hit test results
-            const referenceSpace = renderer.xr.getReferenceSpace();
-            const session = renderer.xr.getSession();
-            
-            if (!hitTestSource) {
-                session.requestReferenceSpace('viewer').then((refSpace) => {
-                    return session.requestHitTestSource({ space: refSpace });
-                }).then((source) => {
-                    hitTestSource = source;
-                }).catch((error) => {
-                    console.error("Error setting up hit test:", error);
-                });
-                return;
-            }
-            
-            const hitTestResults = frame.getHitTestResults(hitTestSource);
-            
-            if (hitTestResults.length > 0 && model) {
-                const hit = hitTestResults[0];
-                const pose = hit.getPose(referenceSpace);
-                
-                if (!modelAnchor) {
-                    modelAnchor = pose.transform;
-                    model.visible = true;
-                    
-                    // Position the model group at the hit location
-                    modelGroup.position.setFromMatrixPosition(pose.transform.matrix);
-                    modelGroup.quaternion.setFromRotationMatrix(pose.transform.matrix);
-                    modelGroup.updateMatrix();
-                }
-            }
-            
-            renderer.render(scene, camera);
-        }
-        
-        // Handle session end
-        function onSessionEnd() {
-            renderer.setAnimationLoop(null);
-            container.style.display = 'none';
-            enterARBtn.style.display = 'block';
-            exitARBtn.style.display = 'none';
-            rotateBtn.style.display = 'none';
-            scaleBtn.style.display = 'none';
-            moveBtn.style.display = 'none';
-            
-            if (model) {
-                model.visible = false;
-            }
-            
-            hitTestSource = null;
-            modelAnchor = null;
-            isARSessionActive = false;
-        }
-        
-        // Update interaction mode UI
-        function updateInteractionUI() {
-            // Reset all buttons
-            rotateBtn.style.background = 'rgba(0,0,0,0.7)';
-            scaleBtn.style.background = 'rgba(0,0,0,0.7)';
-            moveBtn.style.background = 'rgba(0,0,0,0.7)';
-            
-            // Highlight current mode
-            switch(interactionMode) {
-                case 'rotate':
-                    rotateBtn.style.background = 'rgba(0,150,255,0.7)';
-                    break;
-                case 'scale':
-                    scaleBtn.style.background = 'rgba(0,150,255,0.7)';
-                    break;
-                case 'move':
-                    moveBtn.style.background = 'rgba(0,150,255,0.7)';
-                    break;
-            }
-        }
-        
-        // Set up model interaction handlers
-        function setupModelInteraction() {
-            const modelContainer = renderer.domElement;
-            let isDragging = false;
-            let startX, startY;
-            let startRotationY, startScale, startPosition;
-            
-            modelContainer.addEventListener('touchstart', (e) => {
-                if (!isARSessionActive || !modelAnchor || !modelGroup) return;
-                
-                e.preventDefault();
-                
-                const now = Date.now();
-                if (now - lastTapTime < 300) {
-                    // Double tap - reset model position
-                    modelGroup.position.set(0, 0, 0);
-                    modelGroup.rotation.set(0, 0, 0);
-                    modelGroup.scale.set(0.5, 0.5, 0.5);
-                    return;
-                }
-                lastTapTime = now;
-                
-                isDragging = true;
-                startX = e.touches[0].clientX;
-                startY = e.touches[0].clientY;
-                
-                // Save initial values
-                startRotationY = modelGroup.rotation.y;
-                startScale = modelGroup.scale.x;
-                startPosition = modelGroup.position.clone();
-            });
-            
-            modelContainer.addEventListener('touchmove', (e) => {
-                if (!isDragging || !isARSessionActive || !modelAnchor || !modelGroup) return;
-                
-                e.preventDefault();
-                
-                const touch = e.touches[0];
-                const deltaX = touch.clientX - startX;
-                const deltaY = touch.clientY - startY;
-                
-                switch(interactionMode) {
-                    case 'rotate':
-                        modelGroup.rotation.y = startRotationY + deltaX * 0.01;
-                        break;
-                    case 'scale':
-                        const scale = Math.max(0.1, startScale + deltaY * 0.005);
-                        modelGroup.scale.set(scale, scale, scale);
-                        break;
-                    case 'move':
-                        // Simple 2D movement for demo - would need raycasting for proper 3D movement
-                        modelGroup.position.x = startPosition.x + deltaX * 0.01;
-                        modelGroup.position.y = startPosition.y - deltaY * 0.01;
-                        break;
-                }
-            });
-            
-            modelContainer.addEventListener('touchend', () => {
-                isDragging = false;
-            });
-        }
-        
-        // Use iOS fallback AR (Quick Look)
-        function useIOSFallbackAR() {
-            loadingElement.style.display = 'none';
-            fallbackViewer.style.display = 'block';
-            enterARBtn.style.display = 'none';
-            useFallbackBtn.style.display = 'none';
-            
-            // Get the model-viewer element
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const arButton = document.getElementById('ar-button');
             const modelViewer = document.getElementById('model-viewer');
+            const unsupportedMsg = document.getElementById('unsupported');
+            const loadingMsg = document.getElementById('loading');
             
-            // When the model loads, activate AR
-            modelViewer.addEventListener('load', () => {
-                // Try to activate AR
-                setTimeout(() => {
-                    modelViewer.activateAR();
-                }, 500);
-            });
-            
-            // Add exit button for fallback
-            exitARBtn.style.display = 'block';
-        }
-        
-        // Set up button event listeners
-        enterARBtn.addEventListener('click', async () => {
-            loadingElement.style.display = 'block';
-            loadingElement.textContent = 'Starting AR...';
-            enterARBtn.style.display = 'none';
-            
-            try {
-                await initARSession();
-            } catch (error) {
-                console.error('AR session failed:', error);
-                loadingElement.textContent = 'Failed to start AR: ' + error.message;
-                loadingElement.style.display = 'block';
-                enterARBtn.style.display = 'block';
+            // Check for AR Quick Look support (iOS 12+)
+            function checkARSupport() {
+                // Model Viewer handles most detection, but we'll do some basic checks
+                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                const isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
                 
-                // For iOS, show fallback option
-                if (isIOS) {
-                    useFallbackBtn.style.display = 'block';
+                if (!isIOS || !isSafari) {
+                    unsupportedMsg.style.display = 'block';
+                    arButton.disabled = true;
+                    return false;
                 }
+                
+                return true;
             }
-        });
-        
-        exitARBtn.addEventListener('click', () => {
-            // Check if we're in fallback mode
-            if (fallbackViewer.style.display === 'block') {
-                fallbackViewer.style.display = 'none';
-                enterARBtn.style.display = 'block';
-                exitARBtn.style.display = 'none';
-                if (isIOS) {
-                    useFallbackBtn.style.display = 'block';
-                }
+            
+            // Initialize AR functionality
+            function initAR() {
+                if (!checkARSupport()) return;
+                
+                // Show the model viewer
+                modelViewer.style.display = 'block';
+                loadingMsg.style.display = 'none';
+                
+                // Set up AR button
+                arButton.addEventListener('click', () => {
+                    loadingMsg.style.display = 'block';
+                    
+                    // Activate AR
+                    setTimeout(() => {
+                        try {
+                            modelViewer.activateAR();
+                            loadingMsg.style.display = 'none';
+                        } catch (error) {
+                            console.error('AR failed to start:', error);
+                            loadingMsg.style.display = 'none';
+                            unsupportedMsg.textContent = 'Failed to start AR. Please try again.';
+                            unsupportedMsg.style.display = 'block';
+                        }
+                    }, 500);
+                });
+            }
+            
+            // Wait for model-viewer to load
+            if (customElements.get('model-viewer')) {
+                initAR();
             } else {
-                const session = renderer.xr.getSession();
-                if (session) {
-                    session.end();
-                }
+                customElements.whenDefined('model-viewer').then(initAR);
             }
-        });
-        
-        rotateBtn.addEventListener('click', () => {
-            interactionMode = 'rotate';
-            updateInteractionUI();
-        });
-        
-        scaleBtn.addEventListener('click', () => {
-            interactionMode = 'scale';
-            updateInteractionUI();
-        });
-        
-        moveBtn.addEventListener('click', () => {
-            interactionMode = 'move';
-            updateInteractionUI();
-        });
-        
-        grantPermissionBtn.addEventListener('click', async () => {
-            permissionPrompt.style.display = 'none';
-            loadingElement.style.display = 'block';
-            loadingElement.textContent = 'Requesting camera permission...';
             
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                stream.getTracks().forEach(track => track.stop());
-                hasRequestedPermission = true;
-                await initARSession();
-            } catch (error) {
-                console.error('Camera permission denied:', error);
-                loadingElement.textContent = 'Camera permission is required for AR.';
-                loadingElement.style.display = 'block';
-                enterARBtn.style.display = 'block';
-            }
-        });
-        
-        denyPermissionBtn.addEventListener('click', () => {
-            permissionPrompt.style.display = 'none';
-            enterARBtn.style.display = 'block';
-        });
-        
-        useFallbackBtn.addEventListener('click', () => {
-            useIOSFallbackAR();
-        });
-        
-        // Initialize the scene when the page loads
-        window.addEventListener('load', () => {
-            initScene();
-            
-            // On iOS, show the fallback option immediately
-            if (isIOS) {
-                useFallbackBtn.style.display = 'block';
-                enterARBtn.style.display = 'none';
-            }
+            // Show loading state initially
+            loadingMsg.style.display = 'block';
         });
     </script>
 </body>
