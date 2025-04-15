@@ -69,6 +69,11 @@
             left: 20px;
             z-index: 1001;
         }
+        
+        #loading {
+            display: none;
+            margin: 20px 0;
+        }
     </style>
     <!-- Model Viewer for AR Quick Look (iOS) -->
     <script type="module" src="https://unpkg.com/@google/model-viewer@^2.1.1/dist/model-viewer.min.js"></script>
@@ -85,25 +90,26 @@
         <!-- Model Viewer for iOS -->
         <model-viewer 
             id="model-viewer"
-            src="https://cdn.glitch.me/5d19e017-1621-4c8e-9c1b-8a1c6a0d1b3f%2FAstronaut.glb?v=1636390891856"
+            src="https://cdn.glitch.global/5d19e017-1621-4c8e-9c1b-8a1c6a0d1b3f/Astronaut.glb?v=1636390891856"
             ar
-            ar-modes="quick-look scene-viewer webxr"
+            ar-modes="quick-look"
             camera-controls
             auto-rotate
             style="width: 100%; height: 400px; display: none;">
         </model-viewer>
         
-        <!-- Buttons for different AR modes -->
-        <button id="quicklook-btn" style="display: none;">View in AR (iOS)</button>
-        <button id="webxr-btn" style="display: none;">View in AR (Android)</button>
+        <!-- Single AR button that adapts to device -->
+        <button id="ar-button" style="display: none;">View in AR</button>
+        <div id="loading">Loading AR experience...</div>
         
         <div id="status">Detecting your device...</div>
         
         <div class="instructions">
             <h3>How to use:</h3>
-            <p><strong>On iPhone:</strong> Tap "View in AR (iOS)"</p>
-            <p><strong>On Android:</strong> Tap "View in AR (Android)"</p>
-            <p>Point your camera at a flat surface and tap to place the model</p>
+            <p>1. Tap "View in AR" button</p>
+            <p>2. Point your camera at a flat surface</p>
+            <p>3. Tap to place the model (on Android)</p>
+            <p>4. Move around to view from different angles</p>
         </div>
     </div>
 
@@ -114,12 +120,12 @@
     <script>
         document.addEventListener('DOMContentLoaded', async () => {
             // DOM elements
-            const quicklookBtn = document.getElementById('quicklook-btn');
-            const webxrBtn = document.getElementById('webxr-btn');
+            const arButton = document.getElementById('ar-button');
             const modelViewer = document.getElementById('model-viewer');
             const statusEl = document.getElementById('status');
             const webxrContainer = document.getElementById('webxr-container');
             const exitWebxrBtn = document.getElementById('exit-webxr');
+            const loadingEl = document.getElementById('loading');
             
             // Detect device type
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
@@ -130,14 +136,30 @@
                 new WebXRPolyfill();
             }
             
+            // Track if we're using WebXR
+            let renderer;
+            
             // Check AR capabilities
             async function checkARSupport() {
+                loadingEl.style.display = 'block';
+                
                 // iOS - AR Quick Look
                 if (isIOS) {
-                    modelViewer.style.display = 'block';
-                    quicklookBtn.style.display = 'inline-block';
-                    statusEl.textContent = 'Your device supports AR Quick Look';
-                    return 'quicklook';
+                    try {
+                        // Wait for model-viewer to be defined
+                        await customElements.whenDefined('model-viewer');
+                        modelViewer.style.display = 'block';
+                        arButton.style.display = 'inline-block';
+                        statusEl.textContent = 'Your device supports AR Quick Look';
+                        loadingEl.style.display = 'none';
+                        return 'quicklook';
+                    } catch (e) {
+                        console.error('iOS AR setup failed:', e);
+                        statusEl.textContent = 'AR setup failed on your device';
+                        statusEl.style.background = '#ffebee';
+                        loadingEl.style.display = 'none';
+                        return null;
+                    }
                 }
                 
                 // Android - WebXR
@@ -145,8 +167,9 @@
                     try {
                         const supported = await navigator.xr.isSessionSupported('immersive-ar');
                         if (supported) {
-                            webxrBtn.style.display = 'inline-block';
+                            arButton.style.display = 'inline-block';
                             statusEl.textContent = 'Your device supports WebXR AR';
+                            loadingEl.style.display = 'none';
                             return 'webxr';
                         }
                     } catch (e) {
@@ -157,11 +180,13 @@
                 // No AR support
                 statusEl.textContent = 'AR not supported on your device';
                 statusEl.style.background = '#ffebee';
+                loadingEl.style.display = 'none';
                 return null;
             }
             
             // Initialize WebXR AR (Android)
             async function initWebXR() {
+                loadingEl.style.display = 'block';
                 statusEl.textContent = 'Starting AR...';
                 
                 try {
@@ -173,7 +198,7 @@
                     const scene = new THREE.Scene();
                     const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
                     
-                    const renderer = new THREE.WebGLRenderer({ 
+                    renderer = new THREE.WebGLRenderer({ 
                         antialias: true, 
                         alpha: true,
                         preserveDrawingBuffer: true
@@ -217,6 +242,7 @@
                     webxrContainer.style.display = 'block';
                     exitWebxrBtn.style.display = 'block';
                     statusEl.textContent = 'Point your camera at a flat surface';
+                    loadingEl.style.display = 'none';
                     
                     // Controller for placing model
                     const controller = renderer.xr.getController(0);
@@ -245,29 +271,45 @@
                     console.error('WebXR AR failed:', error);
                     statusEl.textContent = 'Failed to start AR: ' + error.message;
                     statusEl.style.background = '#ffebee';
+                    loadingEl.style.display = 'none';
+                }
+            }
+            
+            // Launch AR based on device type
+            async function launchAR() {
+                const arType = await checkARSupport();
+                
+                if (arType === 'quicklook') {
+                    loadingEl.style.display = 'block';
+                    statusEl.textContent = 'Launching AR...';
+                    
+                    try {
+                        // Add slight delay to ensure UI updates are visible
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                        await modelViewer.activateAR();
+                        statusEl.textContent = 'Point your camera at a flat surface';
+                    } catch (error) {
+                        console.error('Quick Look AR failed:', error);
+                        statusEl.textContent = 'Failed to launch AR: ' + error.message;
+                        statusEl.style.background = '#ffebee';
+                    } finally {
+                        loadingEl.style.display = 'none';
+                    }
+                } 
+                else if (arType === 'webxr') {
+                    await initWebXR();
                 }
             }
             
             // Set up event listeners
-            quicklookBtn.addEventListener('click', () => {
-                statusEl.textContent = 'Launching AR...';
-                setTimeout(() => {
-                    modelViewer.activateAR();
-                    statusEl.textContent = 'Point your camera at a flat surface';
-                }, 500);
-            });
-            
-            webxrBtn.addEventListener('click', initWebXR);
+            arButton.addEventListener('click', launchAR);
             exitWebxrBtn.addEventListener('click', () => {
                 const session = renderer?.xr?.getSession();
                 if (session) session.end();
             });
             
             // Initialize
-            const arType = await checkARSupport();
-            if (!arType) {
-                statusEl.style.background = '#ffebee';
-            }
+            await checkARSupport();
         });
     </script>
 </body>
