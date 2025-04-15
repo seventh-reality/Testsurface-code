@@ -4,12 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Custom AR Model Viewer</title>
+    <!-- Fixed Three.js CDN URLs -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <!-- Updated WebXR Polyfill with iOS specific fixes -->
-    <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.min.js"></script>
+    <!-- Fixed WebXR Polyfill URL -->
+    <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@2.0.4/build/webxr-polyfill.min.js"></script>
     <!-- Model Viewer as fallback -->
-    <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+    <script type="module" src="https://unpkg.com/@google/model-viewer@^2.1.1/dist/model-viewer.min.js"></script>
     <style>
         body {
             margin: 0;
@@ -200,8 +201,8 @@
         const fallbackViewer = document.getElementById('model-viewer-fallback');
         const useFallbackBtn = document.getElementById('use-fallback');
         
-        // Model URL - replace with your own model
-        const modelUrl = 'https://modelviewer.dev/shared-assets/models/Astronaut.glb';
+        // Model URL - using a reliable model source
+        const modelUrl = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Duck/glTF/Duck.gltf';
         
         // Scene variables
         let scene, camera, renderer, model;
@@ -303,7 +304,7 @@
             directionalLight.position.set(0, 10, 0);
             scene.add(directionalLight);
             
-            // Load 3D model
+            // Load 3D model - using a more reliable model source
             const loader = new THREE.GLTFLoader();
             loader.load(modelUrl, (gltf) => {
                 model = gltf.scene;
