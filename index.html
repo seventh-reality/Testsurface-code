@@ -6,9 +6,10 @@
     <title>Custom AR Model Viewer</title>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/webxr/VRButton.js"></script>
-    <!-- Updated WebXR Polyfill -->
+    <!-- Updated WebXR Polyfill with iOS specific fixes -->
     <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.min.js"></script>
+    <!-- Model Viewer as fallback -->
+    <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
     <style>
         body {
             margin: 0;
@@ -117,6 +118,30 @@
             border-radius: 5px;
             cursor: pointer;
         }
+        
+        /* Model Viewer fallback styles */
+        model-viewer {
+            width: 100%;
+            height: 100%;
+            display: none;
+        }
+        
+        #model-viewer-fallback {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none;
+        }
+        
+        #use-fallback {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -129,21 +154,36 @@
         <button id="deny-permission">Deny</button>
     </div>
     
+    <!-- Model Viewer fallback for iOS -->
+    <div id="model-viewer-fallback">
+        <model-viewer 
+            id="model-viewer"
+            ar 
+            ar-modes="scene-viewer quick-look" 
+            ar-scale="auto"
+            camera-controls 
+            src="https://modelviewer.dev/shared-assets/models/Astronaut.glb">
+        </model-viewer>
+    </div>
+    
     <!-- Custom AR UI Controls -->
     <button id="enter-ar" class="ar-ui-button">Start AR</button>
     <button id="exit-ar" class="ar-ui-button">Exit AR</button>
     <button id="rotate-btn" class="ar-ui-button">Rotate</button>
     <button id="scale-btn" class="ar-ui-button">Scale</button>
     <button id="move-btn" class="ar-ui-button">Move</button>
+    <button id="use-fallback" class="ar-ui-button">Use AR Quick Look</button>
     
     <script>
-        // Initialize WebXR Polyfill for iOS and older Android devices
-        if (!('xr' in navigator) || !navigator.xr) {
-            const polyfill = new WebXRPolyfill({
-                global: window,
-                allowCardboardOnDesktop: false,
-            });
-        }
+        // Initialize WebXR Polyfill with iOS specific settings
+        const polyfill = new WebXRPolyfill({
+            global: window,
+            allowCardboardOnDesktop: false,
+            cardboardConfig: {
+                isMobile: true,
+                isDaydreamReady: false
+            }
+        });
 
         // DOM elements
         const container = document.getElementById('ar-container');
@@ -157,6 +197,8 @@
         const rotateBtn = document.getElementById('rotate-btn');
         const scaleBtn = document.getElementById('scale-btn');
         const moveBtn = document.getElementById('move-btn');
+        const fallbackViewer = document.getElementById('model-viewer-fallback');
+        const useFallbackBtn = document.getElementById('use-fallback');
         
         // Model URL - replace with your own model
         const modelUrl = 'https://modelviewer.dev/shared-assets/models/Astronaut.glb';
@@ -170,10 +212,17 @@
         let isARSessionActive = false;
         let lastTapTime = 0;
         let hasRequestedPermission = false;
+        let isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         
         // Check for WebXR support
         async function checkXRSupport() {
             if (!navigator.xr) {
+                if (isIOS) {
+                    // On iOS, show the fallback option
+                    useFallbackBtn.style.display = 'block';
+                    loadingElement.style.display = 'none';
+                    return false;
+                }
                 showUnsupported("WebXR is not supported in your browser. Try using Chrome or Safari on a newer device.");
                 return false;
             }
@@ -181,12 +230,23 @@
             try {
                 const supported = await navigator.xr.isSessionSupported('immersive-ar');
                 if (!supported) {
+                    if (isIOS) {
+                        // On iOS, show the fallback option
+                        useFallbackBtn.style.display = 'block';
+                        loadingElement.style.display = 'none';
+                        return false;
+                    }
                     showUnsupported("AR is not supported on your device or browser.");
                     return false;
                 }
                 return true;
             } catch (error) {
                 console.error("Error checking AR support:", error);
+                if (isIOS) {
+                    useFallbackBtn.style.display = 'block';
+                    loadingElement.style.display = 'none';
+                    return false;
+                }
                 showUnsupported("Error checking AR support on your device.");
                 return false;
             }
@@ -328,6 +388,7 @@
                 scaleBtn.style.display = 'block';
                 moveBtn.style.display = 'block';
                 permissionPrompt.style.display = 'none';
+                useFallbackBtn.style.display = 'none';
                 
                 // Highlight the current interaction mode
                 updateInteractionUI();
@@ -342,6 +403,11 @@
                 loadingElement.style.display = 'block';
                 enterARBtn.style.display = 'block';
                 permissionPrompt.style.display = 'none';
+                
+                // For iOS, show fallback option
+                if (isIOS) {
+                    useFallbackBtn.style.display = 'block';
+                }
                 
                 // For iOS, sometimes we need to try again
                 if (error.message.includes('Requested device not found') || 
@@ -495,6 +561,28 @@
             });
         }
         
+        // Use iOS fallback AR (Quick Look)
+        function useIOSFallbackAR() {
+            loadingElement.style.display = 'none';
+            fallbackViewer.style.display = 'block';
+            enterARBtn.style.display = 'none';
+            useFallbackBtn.style.display = 'none';
+            
+            // Get the model-viewer element
+            const modelViewer = document.getElementById('model-viewer');
+            
+            // When the model loads, activate AR
+            modelViewer.addEventListener('load', () => {
+                // Try to activate AR
+                setTimeout(() => {
+                    modelViewer.activateAR();
+                }, 500);
+            });
+            
+            // Add exit button for fallback
+            exitARBtn.style.display = 'block';
+        }
+        
         // Set up button event listeners
         enterARBtn.addEventListener('click', async () => {
             loadingElement.style.display = 'block';
@@ -508,13 +596,28 @@
                 loadingElement.textContent = 'Failed to start AR: ' + error.message;
                 loadingElement.style.display = 'block';
                 enterARBtn.style.display = 'block';
+                
+                // For iOS, show fallback option
+                if (isIOS) {
+                    useFallbackBtn.style.display = 'block';
+                }
             }
         });
         
         exitARBtn.addEventListener('click', () => {
-            const session = renderer.xr.getSession();
-            if (session) {
-                session.end();
+            // Check if we're in fallback mode
+            if (fallbackViewer.style.display === 'block') {
+                fallbackViewer.style.display = 'none';
+                enterARBtn.style.display = 'block';
+                exitARBtn.style.display = 'none';
+                if (isIOS) {
+                    useFallbackBtn.style.display = 'block';
+                }
+            } else {
+                const session = renderer.xr.getSession();
+                if (session) {
+                    session.end();
+                }
             }
         });
         
@@ -556,9 +659,19 @@
             enterARBtn.style.display = 'block';
         });
         
+        useFallbackBtn.addEventListener('click', () => {
+            useIOSFallbackAR();
+        });
+        
         // Initialize the scene when the page loads
         window.addEventListener('load', () => {
             initScene();
+            
+            // On iOS, show the fallback option immediately
+            if (isIOS) {
+                useFallbackBtn.style.display = 'block';
+                enterARBtn.style.display = 'none';
+            }
         });
     </script>
 </body>
