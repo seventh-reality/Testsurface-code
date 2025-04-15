@@ -1,127 +1,709 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0">
-    <title>Basic AR Surface Detection</title>
-    <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/aframe-ar@1.7.0/dist/aframe-ar.min.js"></script>
-    <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            font-family: Arial, sans-serif;
-        }
-        
-        #reticle {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 40px;
-            height: 40px;
-            margin-left: -20px;
-            margin-top: -20px;
-            border: 2px solid rgba(0, 255, 255, 0.8);
-            border-radius: 50%;
-            pointer-events: none;
-            z-index: 99;
-        }
-        
-        #info {
-            position: absolute;
-            top: 10px;
-            width: 100%;
-            text-align: center;
-            color: white;
-            background: rgba(0,0,0,0.5);
-            padding: 10px;
-            z-index: 100;
-        }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>AR Model Interaction</title>
+  <!-- A-Frame -->
+  <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe.min.js"></script>
+  <!-- AR.js for fallback -->
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
+  <!-- Three.js -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+  <!-- Hammer.js for gestures -->
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      font-family: -apple-system, Arial, sans-serif;
+    }
+    #ar-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #loading {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.8);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: white;
+      z-index: 100;
+    }
+    #info {
+      position: fixed;
+      bottom: 20px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: white;
+      text-shadow: 1px 1px 2px black;
+      z-index: 10;
+      pointer-events: none;
+    }
+    #start-button {
+      padding: 12px 24px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+    .unsupported {
+      color: #ff4444;
+      margin-top: 20px;
+    }
+    #surface-indicator {
+      position: fixed;
+      width: 40px;
+      height: 40px;
+      border: 2px solid rgba(255,255,255,0.8);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 20;
+      display: none;
+    }
+    #gesture-help {
+      position: fixed;
+      bottom: 60px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: white;
+      background: rgba(0,0,0,0.5);
+      padding: 10px;
+      z-index: 15;
+      display: none;
+    }
+    canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+  </style>
 </head>
 <body>
-    <div id="info">Move your device to detect surfaces. Tap to place object.</div>
-    <div id="reticle"></div>
+  <div id="loading">
+    <h1>AR Model Interaction</h1>
+    <p>Initializing AR environment...</p>
+    <div id="support-message"></div>
+    <button id="start-button">Start AR Experience</button>
+  </div>
 
-    <a-scene 
-        vr-mode-ui="enabled: false"
-        arjs="sourceType: webcam; trackingMethod: best; debugUIEnabled: false;"
-        renderer="logarithmicDepthBuffer: true;"
-        embedded
-    >
-        <a-camera gps-camera rotation-reader></a-camera>
-        
-        <!-- This will be our dynamic content -->
-        <a-entity id="dynamic-content"></a-entity>
-        
-        <!-- AR.js plane detection -->
-        <a-entity id="arjs-planes"></a-entity>
-    </a-scene>
+  <div id="info">Move device to detect surfaces. Tap to place the model.</div>
+  <div id="gesture-help">Use one finger to move, two fingers to rotate/scale</div>
+  <div id="surface-indicator"></div>
+  
+  <div id="ar-container"></div>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const scene = document.querySelector('a-scene');
-            const reticle = document.getElementById('reticle');
-            const dynamicContent = document.getElementById('dynamic-content');
-            const arjsPlanes = document.getElementById('arjs-planes');
-            
-            // Wait for scene to be ready
-            scene.addEventListener('loaded', () => {
-                const arSystem = scene.systems['arjs'];
-                
-                // Configure AR session
-                arSystem._arSession.configure({
-                    lightEstimationEnabled: true,
-                    planeDetection: {
-                        enabled: true,
-                        detectionMode: 'horizontal'
-                    }
-                });
-                
-                // Add plane detection visualization
-                arSystem.addEventListener('planeAdded', (event) => {
-                    const plane = event.detail.plane;
-                    const planeEntity = document.createElement('a-entity');
-                    
-                    planeEntity.setAttribute('geometry', {
-                        primitive: 'plane',
-                        width: plane.width,
-                        height: plane.height
-                    });
-                    
-                    planeEntity.setAttribute('position', plane.position);
-                    planeEntity.setAttribute('rotation', plane.rotation);
-                    planeEntity.setAttribute('material', {
-                        color: '#00ffff',
-                        opacity: 0.5,
-                        transparent: true,
-                        shader: 'flat'
-                    });
-                    
-                    arjsPlanes.appendChild(planeEntity);
-                });
-                
-                // Handle tap to place object
-                scene.addEventListener('click', (evt) => {
-                    // Get hit test results
-                    const hitTestResults = arSystem._hitTesting.getResults();
-                    
-                    if (hitTestResults.length > 0) {
-                        const hit = hitTestResults[0];
-                        const position = hit.position;
-                        
-                        // Create a simple box at the hit position
-                        const box = document.createElement('a-box');
-                        box.setAttribute('position', position);
-                        box.setAttribute('color', '#4CC3D9');
-                        box.setAttribute('scale', '0.2 0.2 0.2');
-                        box.setAttribute('shadow', 'cast: true; receive: true');
-                        
-                        dynamicContent.appendChild(box);
-                    }
-                });
-            });
+  <script>
+    // Configuration
+    const config = {
+      modelUrl: 'all.glb',
+      debug: true,
+      initialScale: 1.0,
+      minScale: 0.1,
+      maxScale: 2.0,
+      stabilityThreshold: 0.05,
+      modelUnits: 'meters',
+      reticle: {
+        ringRadius: 0.15,
+        ringThickness: 0.05,
+        segments: 32,
+        color: 0xffffff,
+        opacity: 0.8,
+        pulseSpeed: 0.5,
+        pulseMin: 0.9,
+        pulseMax: 1.1,
+        circleRadius: 0.1,
+        circleSegments: 24,
+        gridSize: 0.3,
+        gridDivisions: 8,
+        gridColor: 0xffffff,
+        gridOpacity: 0.3
+      }
+    };
+
+    // Global variables
+    let scene, camera, renderer;
+    let model = null;
+    let reticle = null;
+    let reticlePulse = 1;
+    let reticlePulseDirection = 1;
+    let arjsScene = null;
+    let isModelPlaced = false;
+    let currentScale = config.initialScale;
+    let lastPosition = new THREE.Vector3();
+    let hammerManager = null;
+    let initialDistance = 0;
+    let initialScale = 1;
+    let initialAngle = 0;
+    let initialRotation = 0;
+    let modelBoundingBox = new THREE.Box3();
+
+    // Check for WebXR support
+    async function checkXRSupport() {
+      if (!navigator.xr) return false;
+      try {
+        return await navigator.xr.isSessionSupported('immersive-ar');
+      } catch (e) {
+        console.error("XR support check failed:", e);
+        return false;
+      }
+    }
+
+    // Check camera permissions
+    async function checkCameraPermissions() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(track => track.stop());
+        return true;
+      } catch (e) {
+        console.error("Camera permission denied:", e);
+        return false;
+      }
+    }
+
+    // Create enhanced reticle mesh
+    function createReticle() {
+      const reticleGroup = new THREE.Group();
+      
+      // Outer ring
+      const ringGeometry = new THREE.RingGeometry(
+        config.reticle.ringRadius, 
+        config.reticle.ringRadius + config.reticle.ringThickness, 
+        config.reticle.segments
+      ).rotateX(-Math.PI / 2);
+      
+      const ringMaterial = new THREE.MeshBasicMaterial({
+        color: config.reticle.color,
+        transparent: true,
+        opacity: config.reticle.opacity
+      });
+      
+      const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+      reticleGroup.add(ring);
+      
+      // Inner circle
+      const circleGeometry = new THREE.CircleGeometry(
+        config.reticle.circleRadius, 
+        config.reticle.circleSegments
+      ).rotateX(-Math.PI / 2);
+      
+      const circleMaterial = new THREE.MeshBasicMaterial({
+        color: config.reticle.color,
+        transparent: true,
+        opacity: config.reticle.opacity
+      });
+      
+      const circle = new THREE.Mesh(circleGeometry, circleMaterial);
+      reticleGroup.add(circle);
+      
+      // Grid mesh
+      const gridGeometry = new THREE.PlaneGeometry(
+        config.reticle.gridSize, 
+        config.reticle.gridSize, 
+        config.reticle.gridDivisions, 
+        config.reticle.gridDivisions
+      ).rotateX(-Math.PI / 2);
+      
+      const gridMaterial = new THREE.MeshBasicMaterial({
+        color: config.reticle.gridColor,
+        transparent: true,
+        opacity: config.reticle.gridOpacity,
+        wireframe: true
+      });
+      
+      const grid = new THREE.Mesh(gridGeometry, gridMaterial);
+      reticleGroup.add(grid);
+      
+      reticleGroup.matrixAutoUpdate = false;
+      reticleGroup.visible = false;
+      
+      return reticleGroup;
+    }
+
+    // Initialize WebXR mode
+    async function initWebXR() {
+      try {
+        const hasPermission = await checkCameraPermissions();
+        if (!hasPermission) {
+          showCameraError();
+          return;
+        }
+
+        // Create Three.js scene
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        
+        renderer = new THREE.WebGLRenderer({ 
+          antialias: true, 
+          alpha: true,
+          powerPreference: "high-performance"
         });
-    </script>
+        renderer.setPixelRatio(window.devicePixelRatio || 1);
+        renderer.setSize(window.innerWidth, window.innerHeight, false);
+        renderer.xr.enabled = true;
+        document.getElementById('ar-container').appendChild(renderer.domElement);
+        
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(0.5, 1, 0.25);
+        scene.add(directionalLight);
+        
+        // Create enhanced reticle
+        reticle = createReticle();
+        scene.add(reticle);
+        
+        // Load model with proper scaling
+        const loader = new THREE.GLTFLoader();
+        try {
+          const gltf = await loader.loadAsync(config.modelUrl);
+          model = gltf.scene;
+          
+          // Calculate bounding box to determine proper scale
+          modelBoundingBox.setFromObject(model);
+          const size = modelBoundingBox.getSize(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z);
+          
+          // Adjust scale based on model size
+          const targetSize = 1.0; // Target size in meters
+          const scaleFactor = targetSize / maxDim;
+          
+          model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+          currentScale = scaleFactor;
+          
+          model.visible = false; // Start hidden until placed
+          scene.add(model);
+          
+          console.log(`Model loaded with initial scale: ${scaleFactor.toFixed(2)}`);
+        } catch (e) {
+          console.error("Failed to load model:", e);
+          // Fallback cube with proper scaling
+          model = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 1, 1),
+            new THREE.MeshStandardMaterial({ color: 0x00ff00 })
+          );
+          model.visible = false;
+          scene.add(model);
+        }
+        
+        // Start AR session
+        const session = await navigator.xr.requestSession('immersive-ar');
+        await renderer.xr.setSession(session);
+        
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('gesture-help').style.display = 'block';
+        document.getElementById('surface-indicator').style.display = 'block';
+        
+        // Set up controller for placement
+        const controller = renderer.xr.getController(0);
+        controller.addEventListener('select', placeModel);
+        scene.add(controller);
+        
+        // Set up gesture controls after model is placed
+        setupGestureControls();
+        
+        // Start animation loop
+        renderer.setAnimationLoop(render);
+      } catch (e) {
+        console.error("WebXR initialization failed:", e);
+        fallbackToARJS();
+      }
+    }
+
+    // Initialize AR.js fallback mode with proper scaling
+    async function initARJS() {
+      try {
+        const hasPermission = await checkCameraPermissions();
+        if (!hasPermission) {
+          showCameraError();
+          return;
+        }
+
+        document.getElementById('ar-container').innerHTML = `
+          <a-scene 
+            vr-mode-ui="enabled: false"
+            arjs="sourceType: webcam; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+            renderer="logarithmicDepthBuffer: true; precision: medium;"
+            embedded
+            cursor="rayOrigin: mouse; fuse: false"
+            raycaster="objects: .clickable">
+            
+            <a-camera gps-camera rotation-reader></a-camera>
+            
+            <a-entity geometry="primitive: plane; width: 100; height: 100" 
+                     material="visible: false; shader: flat"
+                     rotation="-90 0 0" class="clickable surface-plane">
+            </a-entity>
+            
+            <a-entity id="model" gltf-model="${config.modelUrl}" 
+                     visible="false">
+            </a-entity>
+            
+            <!-- AR.js reticle -->
+            <a-entity id="arjs-reticle" visible="false">
+              <a-ring color="white" radius-inner="${config.reticle.ringRadius}" 
+                     radius-outer="${config.reticle.ringRadius + config.reticle.ringThickness}" 
+                     opacity="${config.reticle.opacity}" rotation="-90 0 0">
+              </a-ring>
+              <a-circle color="white" radius="${config.reticle.circleRadius}" 
+                       opacity="${config.reticle.opacity}" rotation="-90 0 0">
+              </a-circle>
+              <a-grid material="wireframe: true; color: white; opacity: ${config.reticle.gridOpacity}" 
+                      width="${config.reticle.gridSize}" height="${config.reticle.gridSize}" 
+                      rotation="-90 0 0">
+              </a-grid>
+            </a-entity>
+          </a-scene>
+        `;
+        
+        arjsScene = document.querySelector('a-scene');
+        const modelEl = document.getElementById('model');
+        const reticleEl = document.getElementById('arjs-reticle');
+        
+        arjsScene.addEventListener('loaded', () => {
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('gesture-help').style.display = 'block';
+          
+          // Wait for model to load to apply proper scaling
+          modelEl.addEventListener('model-loaded', () => {
+            const modelObject = modelEl.object3D;
+            const box = new THREE.Box3().setFromObject(modelObject);
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const targetSize = 1.0;
+            const scaleFactor = targetSize / maxDim;
+            
+            modelEl.setAttribute('scale', {
+              x: scaleFactor,
+              y: scaleFactor,
+              z: scaleFactor
+            });
+            
+            console.log(`AR.js model scaled with factor: ${scaleFactor.toFixed(2)}`);
+          });
+          
+          // Place model on surface click
+          arjsScene.addEventListener('click', (e) => {
+            if (!isModelPlaced && e.detail.intersection && 
+                e.detail.intersection.object.el.classList.contains('surface-plane')) {
+              placeModelARJS(e.detail.intersection.point);
+              reticleEl.setAttribute('visible', 'false');
+            }
+          });
+          
+          // Show reticle when intersecting with surface
+          arjsScene.addEventListener('mouseenter', (e) => {
+            if (!isModelPlaced && e.detail.intersection && 
+                e.detail.intersection.object.el.classList.contains('surface-plane')) {
+              reticleEl.setAttribute('visible', 'true');
+              reticleEl.setAttribute('position', e.detail.intersection.point);
+            }
+          });
+          
+          // Hide reticle when not intersecting with surface
+          arjsScene.addEventListener('mouseleave', (e) => {
+            if (!isModelPlaced) {
+              reticleEl.setAttribute('visible', 'false');
+            }
+          });
+          
+          // Set up gesture controls after model is placed
+          setupARJSGestureControls(modelEl);
+        });
+      } catch (e) {
+        console.error("AR.js initialization failed:", e);
+        document.getElementById('support-message').innerHTML = 
+          '<p class="unsupported">Failed to initialize AR</p>';
+      }
+    }
+
+    // Place model in WebXR mode
+    function placeModel() {
+      if (!isModelPlaced && reticle.visible) {
+        model.position.setFromMatrixPosition(reticle.matrix);
+        model.quaternion.setFromRotationMatrix(reticle.matrix);
+        model.visible = true;
+        isModelPlaced = true;
+        
+        // Change reticle color to indicate placement
+        reticle.children.forEach(child => {
+          if (child.material) {
+            child.material.color.setHex(0x00ff00);
+          }
+        });
+      }
+    }
+
+    // Place model in AR.js mode
+    function placeModelARJS(position) {
+      const modelEl = document.getElementById('model');
+      modelEl.setAttribute('visible', 'true');
+      modelEl.setAttribute('position', position);
+      isModelPlaced = true;
+    }
+
+    // Set up gesture controls for WebXR
+    function setupGestureControls() {
+      const canvas = renderer.domElement;
+      hammerManager = new Hammer.Manager(canvas);
+      
+      // Single finger pan to move model
+      const pan = new Hammer.Pan({ threshold: 5 });
+      hammerManager.add(pan);
+      
+      // Two finger pinch to scale model
+      const pinch = new Hammer.Pinch({ threshold: 0.1 });
+      hammerManager.add(pinch);
+      
+      // Two finger rotate to rotate model
+      const rotate = new Hammer.Rotate({ threshold: 0.1 });
+      hammerManager.add(rotate);
+      
+      hammerManager.on("panstart", (e) => {
+        if (isModelPlaced) {
+          lastPosition.copy(model.position);
+        }
+      });
+      
+      hammerManager.on("pan", (e) => {
+        if (isModelPlaced && e.pointers.length === 1) {
+          const vector = new THREE.Vector3(
+            (e.center.x / window.innerWidth) * 2 - 1,
+            -(e.center.y / window.innerHeight) * 2 + 1,
+            0.5
+          );
+          vector.unproject(camera);
+          
+          const direction = vector.sub(camera.position).normalize();
+          const distance = -camera.position.y / direction.y;
+          const position = camera.position.clone().add(direction.multiplyScalar(distance));
+          
+          model.position.copy(position);
+        }
+      });
+      
+      hammerManager.on("pinchstart", (e) => {
+        if (isModelPlaced) {
+          initialScale = currentScale;
+        }
+      });
+      
+      hammerManager.on("pinch", (e) => {
+        if (isModelPlaced) {
+          currentScale = Math.min(config.maxScale, 
+                                Math.max(config.minScale, initialScale * e.scale));
+          model.scale.set(currentScale, currentScale, currentScale);
+        }
+      });
+      
+      hammerManager.on("rotatestart", (e) => {
+        if (isModelPlaced) {
+          initialRotation = model.rotation.y;
+        }
+      });
+      
+      hammerManager.on("rotate", (e) => {
+        if (isModelPlaced) {
+          model.rotation.y = initialRotation + e.rotation * (Math.PI / 180);
+        }
+      });
+    }
+
+    // Set up gesture controls for AR.js
+    function setupARJSGestureControls(modelEl) {
+      const container = document.getElementById('ar-container');
+      hammerManager = new Hammer.Manager(container);
+      
+      // Single finger pan to move model
+      const pan = new Hammer.Pan({ threshold: 5 });
+      hammerManager.add(pan);
+      
+      // Two finger pinch to scale model
+      const pinch = new Hammer.Pinch({ threshold: 0.1 });
+      hammerManager.add(pinch);
+      
+      // Two finger rotate to rotate model
+      const rotate = new Hammer.Rotate({ threshold: 0.1 });
+      hammerManager.add(rotate);
+      
+      let startPosition = null;
+      let startScale = config.initialScale;
+      let startRotation = 0;
+      
+      hammerManager.on("panstart", (e) => {
+        if (isModelPlaced) {
+          const pos = modelEl.getAttribute('position');
+          startPosition = new THREE.Vector3(pos.x, pos.y, pos.z);
+        }
+      });
+      
+      hammerManager.on("pan", (e) => {
+        if (isModelPlaced && e.pointers.length === 1 && startPosition) {
+          const camera = arjsScene.camera;
+          const movementX = e.deltaX / window.innerWidth * 2;
+          const movementY = -e.deltaY / window.innerHeight * 2;
+          
+          const movement = new THREE.Vector3(movementX, movementY, 0);
+          movement.applyQuaternion(camera.quaternion);
+          
+          const newPosition = new THREE.Vector3(
+            startPosition.x + movement.x,
+            startPosition.y + movement.y,
+            startPosition.z + movement.z
+          );
+          
+          modelEl.setAttribute('position', newPosition);
+        }
+      });
+      
+      hammerManager.on("pinchstart", (e) => {
+        if (isModelPlaced) {
+          startScale = modelEl.getAttribute('scale').x;
+        }
+      });
+      
+      hammerManager.on("pinch", (e) => {
+        if (isModelPlaced) {
+          const newScale = Math.min(config.maxScale, 
+                                  Math.max(config.minScale, startScale * e.scale));
+          modelEl.setAttribute('scale', {
+            x: newScale,
+            y: newScale,
+            z: newScale
+          });
+        }
+      });
+      
+      hammerManager.on("rotatestart", (e) => {
+        if (isModelPlaced) {
+          startRotation = modelEl.getAttribute('rotation').y || 0;
+        }
+      });
+      
+      hammerManager.on("rotate", (e) => {
+        if (isModelPlaced) {
+          const newRotation = startRotation + e.rotation;
+          modelEl.setAttribute('rotation', {
+            x: 0,
+            y: newRotation,
+            z: 0
+          });
+        }
+      });
+    }
+
+    // WebXR render loop
+    function render(timestamp, frame) {
+      if (!frame) return;
+      
+      // Update reticle pulse animation
+      if (reticle && !isModelPlaced) {
+        reticlePulse += config.reticle.pulseSpeed * 0.01 * reticlePulseDirection;
+        if (reticlePulse > config.reticle.pulseMax || reticlePulse < config.reticle.pulseMin) {
+          reticlePulseDirection *= -1;
+        }
+        
+        reticle.scale.set(reticlePulse, reticlePulse, reticlePulse);
+        
+        // Get hit test results for surface detection
+        const hitTestResults = frame.getHitTestResultsForInputSource(frame.session.inputSources[0]);
+        
+        if (hitTestResults.length > 0) {
+          const hit = hitTestResults[0];
+          const pose = hit.getPose(renderer.xr.getReferenceSpace());
+          
+          reticle.visible = true;
+          reticle.matrix.fromArray(pose.transform.matrix);
+          
+          // Update surface indicator position
+          const position = new THREE.Vector3();
+          position.setFromMatrixPosition(reticle.matrix);
+          updateSurfaceIndicator(position);
+        } else {
+          reticle.visible = false;
+          document.getElementById('surface-indicator').style.display = 'none';
+        }
+      }
+      
+      renderer.render(scene, camera);
+    }
+
+    // Update surface indicator position
+    function updateSurfaceIndicator(position) {
+      const indicator = document.getElementById('surface-indicator');
+      if (!indicator) return;
+      
+      position.project(camera);
+      
+      const x = (position.x * 0.5 + 0.5) * window.innerWidth;
+      const y = -(position.y * 0.5 - 0.5) * window.innerHeight;
+      
+      indicator.style.left = `${x - 20}px`;
+      indicator.style.top = `${y - 20}px`;
+      indicator.style.display = 'block';
+    }
+
+    // Show camera error message
+    function showCameraError() {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('support-message').innerHTML = 
+        '<p class="unsupported">Camera access was denied. Please enable camera permissions.</p>';
+    }
+
+    // Fallback to AR.js
+    function fallbackToARJS() {
+      initARJS();
+    }
+
+    // Handle window resize
+    function onWindowResize() {
+      if (camera) {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+      }
+      if (renderer) {
+        renderer.setSize(window.innerWidth, window.innerHeight, false);
+      }
+    }
+
+    // Start button event listener
+    document.getElementById('start-button').addEventListener('click', async () => {
+      const supported = await checkXRSupport();
+      document.getElementById('start-button').disabled = true;
+      
+      if (supported) {
+        initWebXR();
+      } else {
+        fallbackToARJS();
+      }
+    });
+
+    // Initialize on load
+    window.addEventListener('load', () => {
+      window.addEventListener('resize', onWindowResize);
+    });
+  </script>
 </body>
 </html>
