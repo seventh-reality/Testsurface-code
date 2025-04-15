@@ -8,8 +8,6 @@
     <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/effects/OutlineEffect.js"></script>
     <style>
         body {
             margin: 0;
@@ -216,6 +214,16 @@
             70% { box-shadow: 0 0 0 15px rgba(0,255,255,0); }
             100% { box-shadow: 0 0 0 0 rgba(0,255,255,0); }
         }
+        
+        /* Plane visualization */
+        .arjs-plane {
+            opacity: 0.5;
+            transition: opacity 0.5s ease;
+        }
+        
+        .arjs-plane:hover {
+            opacity: 0.9;
+        }
     </style>
 </head>
 <body>
@@ -269,11 +277,11 @@
         <!-- This will be our dynamic content -->
         <a-entity id="dynamic-content"></a-entity>
         
-        <!-- Advanced surface mesh visualization -->
-        <a-entity id="surface-mesh" visible="false"></a-entity>
-        
         <!-- Ground plane for better depth perception -->
         <a-entity id="ground-plane" geometry="primitive: plane; width: 100; height: 100" rotation="-90 0 0" material="color: #333333; opacity: 0.5; transparent: true; visible: false"></a-entity>
+        
+        <!-- AR.js plane detection -->
+        <a-entity id="arjs-planes"></a-entity>
     </a-scene>
 
     <script>
@@ -288,11 +296,11 @@
             const clearButton = document.getElementById('clear-button');
             const toggleMeshButton = document.getElementById('toggle-mesh-button');
             const dynamicContent = document.getElementById('dynamic-content');
-            const surfaceMesh = document.getElementById('surface-mesh');
             const groundPlane = document.getElementById('ground-plane');
             const objectSelector = document.getElementById('object-selector');
             const instruction = document.getElementById('instruction');
             const debugInfo = document.getElementById('debug-info');
+            const arjsPlanes = document.getElementById('arjs-planes');
             
             // Model options
             const modelOptions = {
@@ -302,17 +310,13 @@
             };
             
             // Track AR state
-            let hasSurfaceDetection = false;
-            let hitTestSource = null;
-            let hitTestSourceInitialized = false;
             let modelPlaced = false;
-            let lastHitPose = null;
             let showSurfaceMesh = false;
-            let meshEntities = [];
             let selectedModel = 'duck';
             let debugMode = false;
             let trackingStarted = false;
             let placedObjects = [];
+            let lastIntersection = null;
             
             // Initialize AR session with enhanced features
             async function initARSession() {
@@ -330,192 +334,136 @@
                 // Get the Three.js renderer and camera
                 const renderer = scene.renderer;
                 const camera = scene.camera;
-                const session = scene.systems["arjs"]._arSession;
-                const referenceSpace = scene.systems["arjs"]._arReferenceSpace;
                 
-                // Enable advanced features if available
-                if (session && session.requestHitTestSource) {
-                    try {
-                        // Request hit test source for world tracking
-                        hitTestSource = await session.requestHitTestSource({
-                            space: referenceSpace
-                        });
-                        hitTestSourceInitialized = true;
+                // Configure AR.js for better plane detection
+                const arSystem = scene.systems["arjs"];
+                arSystem._arSession.configure({
+                    lightEstimationEnabled: true,
+                    planeDetection: {
+                        enabled: true,
+                        detectionMode: 'horizontal'
+                    }
+                });
+                
+                // Show UI elements
+                reticle.style.display = 'block';
+                placeButton.style.display = 'block';
+                toggleMeshButton.style.display = 'block';
+                clearButton.style.display = 'block';
+                objectSelector.style.display = 'flex';
+                instruction.style.display = 'block';
+                
+                // Start animation loop with enhanced tracking
+                renderer.setAnimationLoop(function(timestamp, frame) {
+                    if (!frame) return;
+                    
+                    if (!trackingStarted) {
+                        trackingStarted = true;
+                        loading.textContent = "Tracking started!";
+                        setTimeout(() => {
+                            loading.style.display = 'none';
+                        }, 1000);
+                    }
+                    
+                    // Update debug info
+                    if (debugMode) {
+                        const cameraPos = camera.getWorldPosition(new THREE.Vector3());
+                        debugInfo.innerHTML = `Camera Position:<br>
+                            X: ${cameraPos.x.toFixed(2)}<br>
+                            Y: ${cameraPos.y.toFixed(2)}<br>
+                            Z: ${cameraPos.z.toFixed(2)}<br>
+                            FPS: ${Math.round(renderer.info.render.frameRate)}`;
+                    }
+                    
+                    // Handle plane detection and hit testing
+                    if (!modelPlaced) {
+                        // Get the AR.js hit testing results
+                        const hitTestResults = arSystem._hitTesting.getResults();
                         
-                        // Enable plane detection if available
-                        if (session.requestHitTestSourceForTransientInput) {
-                            const transientHitTestSource = await session.requestHitTestSourceForTransientInput({
-                                profile: 'generic-touchscreen'
-                            });
+                        if (hitTestResults.length > 0) {
+                            const hit = hitTestResults[0];
+                            lastIntersection = hit;
+                            
+                            // Update reticle position and appearance
+                            const position = hit.position;
+                            const point = new THREE.Vector3(position.x, position.y, position.z);
+                            
+                            // Convert to screen coordinates for reticle
+                            const vector = point.clone().project(camera);
+                            vector.x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+                            vector.y = -(vector.y * 0.5 - 0.5) * window.innerHeight;
+                            
+                            reticle.style.left = `${vector.x}px`;
+                            reticle.style.top = `${vector.y}px`;
+                            reticle.style.borderColor = 'rgba(0, 255, 255, 0.9)';
+                            reticle.style.boxShadow = '0 0 20px rgba(0, 255, 255, 0.7)';
+                            reticle.style.transform = 'scale(1.1)';
+                        } else {
+                            reticle.style.borderColor = 'rgba(255, 255, 0, 0.6)';
+                            reticle.style.boxShadow = '0 0 10px rgba(255, 255, 0, 0.4)';
+                            reticle.style.transform = 'scale(1)';
                         }
-                        
-                        loadingProgress.style.width = '70%';
-                        
-                        // Show UI elements
-                        reticle.style.display = 'block';
-                        placeButton.style.display = 'block';
-                        toggleMeshButton.style.display = 'block';
-                        clearButton.style.display = 'block';
-                        objectSelector.style.display = 'flex';
-                        instruction.style.display = 'block';
-                        hasSurfaceDetection = true;
-                        
-                        // Show ground plane for better spatial awareness
-                        groundPlane.setAttribute('visible', 'true');
-                        
-                        // Start animation loop with enhanced tracking
-                        renderer.setAnimationLoop(function(timestamp, frame) {
-                            if (!frame) return;
-                            
-                            if (!trackingStarted) {
-                                trackingStarted = true;
-                                loading.textContent = "Tracking started!";
-                                setTimeout(() => {
-                                    loading.style.display = 'none';
-                                }, 1000);
-                            }
-                            
-                            // Update debug info
-                            if (debugMode) {
-                                const cameraPos = camera.getWorldPosition(new THREE.Vector3());
-                                debugInfo.innerHTML = `Camera Position:<br>
-                                    X: ${cameraPos.x.toFixed(2)}<br>
-                                    Y: ${cameraPos.y.toFixed(2)}<br>
-                                    Z: ${cameraPos.z.toFixed(2)}<br>
-                                    FPS: ${Math.round(renderer.info.render.frameRate)}`;
-                            }
-                            
-                            // Handle hit test if not placed yet
-                            if (!modelPlaced && hitTestSourceInitialized) {
-                                const hitTestResults = frame.getHitTestResults(hitTestSource);
-                                
-                                if (hitTestResults.length > 0) {
-                                    const hit = hitTestResults[0];
-                                    lastHitPose = hit.getPose(referenceSpace);
-                                    
-                                    // Update reticle position and appearance
-                                    const position = lastHitPose.transform.position;
-                                    const point = new THREE.Vector3(position.x, position.y, position.z);
-                                    point.applyMatrix4(camera.matrixWorldInverse);
-                                    
-                                    // Convert to screen coordinates for reticle
-                                    const vector = point.clone().project(camera);
-                                    vector.x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-                                    vector.y = -(vector.y * 0.5 - 0.5) * window.innerHeight;
-                                    
-                                    reticle.style.left = `${vector.x}px`;
-                                    reticle.style.top = `${vector.y}px`;
-                                    reticle.style.borderColor = 'rgba(0, 255, 255, 0.9)';
-                                    reticle.style.boxShadow = '0 0 20px rgba(0, 255, 255, 0.7)';
-                                    reticle.style.transform = 'scale(1.1)';
-                                    
-                                    // Update surface mesh visualization
-                                    if (showSurfaceMesh) {
-                                        updateSurfaceMeshVisualization(hitTestResults, referenceSpace);
-                                    }
-                                } else {
-                                    reticle.style.borderColor = 'rgba(255, 255, 0, 0.6)';
-                                    reticle.style.boxShadow = '0 0 10px rgba(255, 255, 0, 0.4)';
-                                    reticle.style.transform = 'scale(1)';
-                                }
-                            }
-                        });
-                        
-                        loadingProgress.style.width = '100%';
-                        setTimeout(() => {
-                            loading.style.display = 'none';
-                        }, 500);
-                        
-                    } catch (error) {
-                        console.error("Advanced AR features failed:", error);
-                        loading.textContent = "Advanced AR features not supported. Falling back to basic AR.";
-                        hasSurfaceDetection = false;
-                        reticle.style.display = 'none';
-                        loadingProgress.style.width = '100%';
-                        setTimeout(() => {
-                            loading.style.display = 'none';
-                        }, 2000);
-                    }
-                } else {
-                    loading.textContent = "World tracking not supported. Using basic AR.";
-                    hasSurfaceDetection = false;
-                    reticle.style.display = 'none';
-                    loadingProgress.style.width = '100%';
-                    setTimeout(() => {
-                        loading.style.display = 'none';
-                    }, 2000);
-                }
-            }
-            
-            // Enhanced surface mesh visualization with better geometry
-            function updateSurfaceMeshVisualization(hitTestResults, referenceSpace) {
-                // Clear previous mesh entities
-                meshEntities.forEach(entity => {
-                    if (entity.parentNode) {
-                        entity.parentNode.removeChild(entity);
                     }
                 });
-                meshEntities = [];
                 
-                // Create a new mesh for each hit test result
-                hitTestResults.forEach((hit, index) => {
-                    const pose = hit.getPose(referenceSpace);
-                    if (!pose) return;
+                // Listen for plane detection events
+                arSystem.addEventListener('planeAdded', (event) => {
+                    const plane = event.detail.plane;
                     
-                    // Create a more sophisticated mesh entity
-                    const meshEntity = document.createElement('a-entity');
-                    
-                    // Create a circle with a subtle animation
-                    meshEntity.setAttribute('geometry', {
-                        primitive: 'circle',
-                        radius: 0.15,
-                        segments: 32
+                    // Create a visual representation of the plane
+                    const planeEntity = document.createElement('a-entity');
+                    planeEntity.setAttribute('geometry', {
+                        primitive: 'plane',
+                        width: plane.width,
+                        height: plane.height
                     });
-                    
-                    // Position the mesh
-                    meshEntity.setAttribute('position', {
-                        x: pose.transform.position.x,
-                        y: pose.transform.position.y,
-                        z: pose.transform.position.z
-                    });
-                    
-                    // Align with the surface normal
-                    const rotation = new THREE.Quaternion();
-                    rotation.setFromUnitVectors(
-                        new THREE.Vector3(0, 1, 0),
-                        new THREE.Vector3(0, 1, 0) // Adjust based on actual normal if available
-                    );
-                    meshEntity.setAttribute('rotation', new THREE.Euler().setFromQuaternion(rotation));
-                    
-                    // Animated material
-                    meshEntity.setAttribute('material', {
+                    planeEntity.setAttribute('position', plane.position);
+                    planeEntity.setAttribute('rotation', plane.rotation);
+                    planeEntity.setAttribute('material', {
                         color: '#00ffff',
-                        opacity: 0.6,
+                        opacity: 0.3,
                         transparent: true,
-                        shader: 'flat',
-                        side: 'double'
+                        shader: 'flat'
                     });
+                    planeEntity.classList.add('arjs-plane');
                     
-                    // Add pulsing animation
-                    meshEntity.setAttribute('animation', {
-                        property: 'scale',
-                        from: '0.9 0.9 0.9',
-                        to: '1.1 1.1 1.1',
-                        dur: 1500,
-                        loop: true,
-                        easing: 'easeInOutSine',
-                        direction: 'alternate'
-                    });
+                    // Only show if mesh visualization is enabled
+                    planeEntity.setAttribute('visible', showSurfaceMesh);
                     
-                    surfaceMesh.appendChild(meshEntity);
-                    meshEntities.push(meshEntity);
+                    arjsPlanes.appendChild(planeEntity);
                 });
+                
+                // Update plane visuals when they change
+                arSystem.addEventListener('planeUpdated', (event) => {
+                    const plane = event.detail.plane;
+                    const planeEntity = event.detail.object3d;
+                    
+                    if (planeEntity) {
+                        planeEntity.setAttribute('geometry', {
+                            primitive: 'plane',
+                            width: plane.width,
+                            height: plane.height
+                        });
+                        planeEntity.setAttribute('position', plane.position);
+                        planeEntity.setAttribute('rotation', plane.rotation);
+                    }
+                });
+                
+                loadingProgress.style.width = '100%';
+                setTimeout(() => {
+                    loading.style.display = 'none';
+                }, 500);
             }
             
-            // Toggle surface mesh visualization with enhanced effects
+            // Toggle surface mesh visualization
             function toggleSurfaceMesh() {
                 showSurfaceMesh = !showSurfaceMesh;
-                surfaceMesh.setAttribute('visible', showSurfaceMesh);
+                
+                // Toggle visibility of all detected planes
+                const planes = arjsPlanes.querySelectorAll('.arjs-plane');
+                planes.forEach(plane => {
+                    plane.setAttribute('visible', showSurfaceMesh);
+                });
                 
                 if (showSurfaceMesh) {
                     toggleMeshButton.textContent = 'Hide Mesh';
@@ -525,43 +473,20 @@
                     toggleMeshButton.textContent = 'Show Mesh';
                     toggleMeshButton.style.background = 'linear-gradient(145deg, rgba(100,255,100,0.9), rgba(0,180,0,0.9))';
                     groundPlane.setAttribute('visible', 'false');
-                    
-                    // Clear all mesh entities when hiding
-                    meshEntities.forEach(entity => {
-                        if (entity.parentNode) {
-                            entity.parentNode.removeChild(entity);
-                        }
-                    });
-                    meshEntities = [];
                 }
             }
             
             // Enhanced model placement with physics and interaction
             function placeModel() {
-                // Get camera position and direction
-                const camera = scene.camera;
-                const direction = new THREE.Vector3(0, 0, -1);
-                direction.applyQuaternion(camera.quaternion);
+                if (!lastIntersection) return;
                 
-                let position, rotation;
-                
-                if (hasSurfaceDetection && lastHitPose) {
-                    // Place at hit test position
-                    position = new THREE.Vector3(
-                        lastHitPose.transform.position.x,
-                        lastHitPose.transform.position.y,
-                        lastHitPose.transform.position.z
-                    );
-                    
-                    // Align with surface normal if available
-                    rotation = new THREE.Quaternion().copy(camera.quaternion);
-                } else {
-                    // Place 1 meter in front of camera as fallback
-                    position = new THREE.Vector3();
-                    camera.getWorldPosition(position);
-                    position.add(direction.multiplyScalar(1));
-                    rotation = new THREE.Quaternion().copy(camera.quaternion);
-                }
+                // Get position and rotation from intersection
+                const position = lastIntersection.position;
+                const rotation = new THREE.Quaternion();
+                rotation.setFromUnitVectors(
+                    new THREE.Vector3(0, 1, 0),
+                    lastIntersection.face.normal
+                );
                 
                 // Create model entity with enhanced features
                 const model = document.createElement('a-entity');
@@ -569,14 +494,6 @@
                 model.setAttribute('scale', '0.01 0.01 0.01');
                 model.setAttribute('position', position);
                 model.setAttribute('rotation', new THREE.Euler().setFromQuaternion(rotation));
-                
-                // Add physics properties
-                model.setAttribute('dynamic-body', {
-                    shape: 'auto',
-                    mass: 1,
-                    linearDamping: 0.5,
-                    angularDamping: 0.5
-                });
                 
                 // Add animation for placement
                 model.setAttribute('animation', {
@@ -684,7 +601,7 @@
             
             // Handle screen taps
             document.addEventListener('click', (e) => {
-                if (!modelPlaced && hasSurfaceDetection && e.target === document.body) {
+                if (!modelPlaced && e.target === document.body) {
                     placeModel();
                 }
             });
@@ -701,11 +618,6 @@
                         startButton.style.display = 'block';
                         loading.textContent = "Ready to start AR experience";
                         loadingProgress.style.width = '10%';
-                        
-                        // Check for advanced features
-                        navigator.xr.addEventListener('devicechange', () => {
-                            console.log("XR device change detected");
-                        });
                     } else {
                         loading.textContent = "AR not supported on your device";
                         loadingProgress.style.width = '100%';
