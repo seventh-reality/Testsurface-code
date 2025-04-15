@@ -3,15 +3,19 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-    <title>SLAM AR with Surface Tracking</title>
+    <title>Advanced SLAM AR with Surface Tracking</title>
     <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe.min.js"></script>
     <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/effects/OutlineEffect.js"></script>
     <style>
         body {
             margin: 0;
             overflow: hidden;
             font-family: Arial, sans-serif;
+            touch-action: none;
         }
         
         #info {
@@ -20,25 +24,40 @@
             width: 100%;
             text-align: center;
             color: white;
-            background: rgba(0,0,0,0.5);
-            padding: 5px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
             z-index: 100;
+            font-size: 14px;
+            backdrop-filter: blur(5px);
+            border-bottom: 1px solid rgba(255,255,255,0.2);
         }
         
         #reticle {
             position: absolute;
             top: 50%;
             left: 50%;
-            width: 40px;
-            height: 40px;
-            margin-left: -20px;
-            margin-top: -20px;
-            border: 3px solid rgba(0, 255, 0, 0.5);
+            width: 50px;
+            height: 50px;
+            margin-left: -25px;
+            margin-top: -25px;
+            border: 2px solid rgba(0, 255, 255, 0.8);
             border-radius: 50%;
             pointer-events: none;
             z-index: 99;
             transition: all 0.1s;
             display: none;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+        }
+        
+        #reticle:before {
+            content: '';
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            right: 5px;
+            bottom: 5px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
         }
         
         #loading {
@@ -47,26 +66,82 @@
             left: 50%;
             transform: translate(-50%, -50%);
             color: white;
-            font-size: 20px;
-            background: rgba(0,0,0,0.7);
-            padding: 20px;
-            border-radius: 10px;
+            font-size: 18px;
+            background: rgba(0,0,0,0.8);
+            padding: 25px;
+            border-radius: 15px;
+            z-index: 100;
+            text-align: center;
+            max-width: 80%;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
             z-index: 100;
         }
         
-        #start-button {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
+        .control-button {
             padding: 12px 24px;
-            background: rgba(0,0,0,0.7);
+            background: linear-gradient(145deg, rgba(0,150,255,0.8), rgba(0,80,200,0.8));
             color: white;
             border: none;
-            border-radius: 5px;
+            border-radius: 25px;
             font-size: 16px;
             cursor: pointer;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            transition: all 0.3s;
+            min-width: 120px;
+            text-align: center;
+            backdrop-filter: blur(5px);
+        }
+        
+        .control-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.4);
+        }
+        
+        .control-button:active {
+            transform: translateY(1px);
+        }
+        
+        #debug-info {
+            position: absolute;
+            bottom: 80px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.5);
+            padding: 8px;
+            font-size: 12px;
+            font-family: monospace;
             z-index: 100;
+            border-radius: 5px;
+            display: none;
+        }
+        
+        #plane-visualization {
+            position: absolute;
+            top: 60px;
+            right: 10px;
+            width: 150px;
+            height: 150px;
+            background: rgba(0,0,0,0.5);
+            border-radius: 10px;
+            z-index: 100;
+            display: none;
+            overflow: hidden;
+        }
+        
+        #plane-canvas {
+            width: 100%;
+            height: 100%;
         }
         
         a-scene {
@@ -74,26 +149,103 @@
             width: 100%;
             height: 100%;
         }
+        
+        .arjs-loader {
+            display: none !important;
+        }
+        
+        #model-selector {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 15px;
+            z-index: 101;
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            max-width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .model-option {
+            padding: 15px;
+            background: rgba(50,50,50,0.6);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        
+        .model-option:hover {
+            background: rgba(70,70,70,0.8);
+            transform: scale(1.02);
+        }
+        
+        #close-selector {
+            margin-top: 15px;
+            padding: 10px;
+            background: rgba(255,50,50,0.7);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
-    <div id="info">SLAM AR with Surface Tracking - Look around to detect surfaces</div>
+    <div id="info">Advanced SLAM AR with Surface Tracking | Look around to detect surfaces</div>
     <div id="reticle"></div>
-    <div id="loading">Loading AR experience...</div>
-    <button id="start-button" style="display: none;">Start AR</button>
+    <div id="loading">Initializing advanced AR experience...</div>
+    
+    <div id="controls">
+        <button id="start-button" class="control-button">Start AR</button>
+        <button id="place-button" class="control-button" style="display: none;">Place Object</button>
+        <button id="change-model-button" class="control-button" style="display: none;">Change Model</button>
+        <button id="debug-button" class="control-button" style="display: none;">Debug Info</button>
+    </div>
+    
+    <div id="debug-info"></div>
+    <div id="plane-visualization">
+        <canvas id="plane-canvas"></canvas>
+    </div>
+    
+    <div id="model-selector">
+        <h3 style="color: white; text-align: center; margin-bottom: 15px;">Select a 3D Model</h3>
+        <button class="model-option" data-model="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Duck/glTF/Duck.gltf">Duck</button>
+        <button class="model-option" data-model="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Flamingo/glTF/Flamingo.gltf">Flamingo</button>
+        <button class="model-option" data-model="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Parrot/glTF/Parrot.gltf">Parrot</button>
+        <button class="model-option" data-model="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Stork/glTF/Stork.gltf">Stork</button>
+        <button class="model-option" data-model="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/LittlestTokyo/glTF/LittlestTokyo.gltf">Tokyo Scene</button>
+        <button id="close-selector" class="control-button">Close</button>
+    </div>
 
     <!-- A-Frame Scene -->
     <a-scene 
         vr-mode-ui="enabled: false"
-        renderer="logarithmicDepthBuffer: true; precision: medium;"
+        renderer="logarithmicDepthBuffer: true; precision: high; antialias: true;"
         embedded 
-        arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;"
+        arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
     >
         <!-- Camera -->
         <a-entity camera></a-entity>
         
+        <!-- Lighting -->
+        <a-entity light="type: ambient; color: #888; intensity: 0.5"></a-entity>
+        <a-entity light="type: directional; color: #fff; intensity: 0.8; position: 1 1 1"></a-entity>
+        
         <!-- This will be our dynamic content -->
         <a-entity id="dynamic-content"></a-entity>
+        
+        <!-- Ground plane visualization -->
+        <a-entity id="ground-plane" geometry="primitive: plane; width: 100; height: 100;" rotation="-90 0 0" material="color: #00ff00; opacity: 0.3; transparent: true; visible: false"></a-entity>
     </a-scene>
 
     <script>
@@ -103,20 +255,40 @@
             const reticle = document.getElementById('reticle');
             const loading = document.getElementById('loading');
             const startButton = document.getElementById('start-button');
+            const placeButton = document.getElementById('place-button');
+            const changeModelButton = document.getElementById('change-model-button');
+            const debugButton = document.getElementById('debug-button');
+            const debugInfo = document.getElementById('debug-info');
+            const planeVisualization = document.getElementById('plane-visualization');
+            const planeCanvas = document.getElementById('plane-canvas');
+            const modelSelector = document.getElementById('model-selector');
             const dynamicContent = document.getElementById('dynamic-content');
+            const groundPlane = document.getElementById('ground-plane');
             
-            // Model URL - Replace with your own model
-            const modelUrl = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Duck/glTF/Duck.gltf';
+            // Available models
+            let currentModelUrl = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Duck/glTF/Duck.gltf';
+            let availableModels = [
+                'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Duck/glTF/Duck.gltf',
+                'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Flamingo/glTF/Flamingo.gltf',
+                'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Parrot/glTF/Parrot.gltf',
+                'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/Stork/glTF/Stork.gltf',
+                'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r132/examples/models/gltf/LittlestTokyo/glTF/LittlestTokyo.gltf'
+            ];
             
-            // Track if we have surface detection
+            // Track AR state
             let hasSurfaceDetection = false;
             let hitTestSource = null;
             let hitTestSourceInitialized = false;
             let modelPlaced = false;
+            let debugMode = false;
+            let lastHitPose = null;
+            let planeDetectionEnabled = false;
+            let detectedPlanes = [];
+            let planeMesh = null;
             
-            // Initialize AR.js with SLAM
+            // Initialize AR.js with advanced features
             async function initARSession() {
-                loading.textContent = "Initializing AR...";
+                loading.textContent = "Initializing advanced AR...";
                 
                 // Wait for scene to be ready
                 await new Promise(resolve => {
@@ -130,7 +302,7 @@
                 const session = scene.systems["arjs"]._arSession;
                 const referenceSpace = scene.systems["arjs"]._arReferenceSpace;
                 
-                // Enable 8th Wall-like features
+                // Enable advanced features if available
                 if (session && session.requestHitTestSource) {
                     try {
                         // Request hit test source for world tracking
@@ -139,35 +311,70 @@
                         });
                         hitTestSourceInitialized = true;
                         
-                        // Show reticle when we have surface detection
+                        // Try to enable plane detection if supported
+                        if (session.updateWorldTrackingState) {
+                            try {
+                                session.updateWorldTrackingState({
+                                    planeDetectionState: { enabled: true }
+                                });
+                                planeDetectionEnabled = true;
+                                loading.textContent = "Plane detection enabled";
+                            } catch (e) {
+                                console.log("Plane detection not supported:", e);
+                            }
+                        }
+                        
+                        // Show UI elements
                         reticle.style.display = 'block';
+                        placeButton.style.display = 'block';
+                        changeModelButton.style.display = 'block';
+                        debugButton.style.display = 'block';
                         hasSurfaceDetection = true;
                         
-                        // Start animation loop
+                        // Start animation loop with advanced features
                         renderer.setAnimationLoop(function(timestamp, frame) {
-                            if (!frame || !hitTestSourceInitialized || modelPlaced) return;
+                            if (!frame) return;
                             
-                            const hitTestResults = frame.getHitTestResults(hitTestSource);
+                            // Update debug info if enabled
+                            if (debugMode) {
+                                updateDebugInfo(frame);
+                            }
                             
-                            if (hitTestResults.length > 0) {
-                                const hit = hitTestResults[0];
-                                const pose = hit.getPose(referenceSpace);
+                            // Handle hit test if not placed yet
+                            if (!modelPlaced && hitTestSourceInitialized) {
+                                const hitTestResults = frame.getHitTestResults(hitTestSource);
                                 
-                                // Update reticle position and color
-                                const position = pose.transform.position;
-                                const point = new THREE.Vector3(position.x, position.y, position.z);
-                                point.applyMatrix4(camera.matrixWorldInverse);
-                                
-                                // Convert to screen coordinates for reticle
-                                const vector = point.clone().project(camera);
-                                vector.x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-                                vector.y = -(vector.y * 0.5 - 0.5) * window.innerHeight;
-                                
-                                reticle.style.left = `${vector.x}px`;
-                                reticle.style.top = `${vector.y}px`;
-                                reticle.style.borderColor = 'rgba(0, 255, 0, 0.8)';
-                            } else {
-                                reticle.style.borderColor = 'rgba(255, 255, 0, 0.5)';
+                                if (hitTestResults.length > 0) {
+                                    const hit = hitTestResults[0];
+                                    lastHitPose = hit.getPose(referenceSpace);
+                                    
+                                    // Update reticle position and appearance
+                                    const position = lastHitPose.transform.position;
+                                    const point = new THREE.Vector3(position.x, position.y, position.z);
+                                    point.applyMatrix4(camera.matrixWorldInverse);
+                                    
+                                    // Convert to screen coordinates for reticle
+                                    const vector = point.clone().project(camera);
+                                    vector.x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+                                    vector.y = -(vector.y * 0.5 - 0.5) * window.innerHeight;
+                                    
+                                    reticle.style.left = `${vector.x}px`;
+                                    reticle.style.top = `${vector.y}px`;
+                                    reticle.style.borderColor = 'rgba(0, 255, 255, 0.9)';
+                                    reticle.style.boxShadow = '0 0 15px rgba(0, 255, 255, 0.7)';
+                                } else {
+                                    reticle.style.borderColor = 'rgba(255, 255, 0, 0.6)';
+                                    reticle.style.boxShadow = '0 0 10px rgba(255, 255, 0, 0.4)';
+                                }
+                            }
+                            
+                            // Handle plane detection if enabled
+                            if (planeDetectionEnabled) {
+                                const worldInformation = frame.getWorldInformation();
+                                if (worldInformation && worldInformation.detectedPlanes) {
+                                    detectedPlanes = worldInformation.detectedPlanes;
+                                    updatePlaneVisualization();
+                                }
                             }
                         });
                         
@@ -175,19 +382,79 @@
                         startButton.style.display = 'none';
                         
                     } catch (error) {
-                        console.error("Hit test failed:", error);
+                        console.error("Advanced AR features failed:", error);
                         loading.textContent = "Advanced AR features not supported. Falling back to basic AR.";
                         hasSurfaceDetection = false;
                         reticle.style.display = 'none';
+                        initBasicAR();
                     }
                 } else {
                     loading.textContent = "World tracking not supported. Using basic AR.";
                     hasSurfaceDetection = false;
                     reticle.style.display = 'none';
+                    initBasicAR();
                 }
             }
             
-            // Place model at reticle position
+            // Initialize basic AR without advanced features
+            function initBasicAR() {
+                placeButton.style.display = 'block';
+                changeModelButton.style.display = 'block';
+                loading.style.display = 'none';
+                startButton.style.display = 'none';
+            }
+            
+            // Update debug information
+            function updateDebugInfo(frame) {
+                if (!frame) return;
+                
+                let debugText = `Advanced AR Debug Info:\n`;
+                debugText += `Tracking state: ${frame.getTrackingState()}\n`;
+                
+                if (frame.getCamera()) {
+                    const camera = frame.getCamera();
+                    debugText += `Camera pose: ${JSON.stringify(camera.pose)}\n`;
+                }
+                
+                if (detectedPlanes && detectedPlanes.length > 0) {
+                    debugText += `Detected planes: ${detectedPlanes.length}\n`;
+                    detectedPlanes.forEach((plane, i) => {
+                        debugText += `Plane ${i+1}: center (${plane.center.x.toFixed(2)}, ${plane.center.y.toFixed(2)}, ${plane.center.z.toFixed(2)})\n`;
+                    });
+                }
+                
+                debugInfo.textContent = debugText;
+            }
+            
+            // Update plane visualization
+            function updatePlaneVisualization() {
+                if (!planeDetectionEnabled || !debugMode) return;
+                
+                const ctx = planeCanvas.getContext('2d');
+                ctx.clearRect(0, 0, planeCanvas.width, planeCanvas.height);
+                
+                // Draw each detected plane
+                detectedPlanes.forEach(plane => {
+                    // Simple visualization - just show plane center and normal
+                    const centerX = planeCanvas.width / 2 + plane.center.x * 20;
+                    const centerY = planeCanvas.height / 2 - plane.center.z * 20; // Using Z for 2D visualization
+                    
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, 5, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
+                    ctx.fill();
+                    
+                    // Draw normal
+                    ctx.beginPath();
+                    ctx.moveTo(centerX, centerY);
+                    ctx.lineTo(centerX + plane.normal.x * 20, centerY - plane.normal.z * 20);
+                    ctx.strokeStyle = 'rgba(255, 255, 0, 0.8)';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                });
+            }
+            
+            // Place model at reticle position or in front of camera
             function placeModel() {
                 if (modelPlaced) return;
                 
@@ -196,48 +463,145 @@
                 const direction = new THREE.Vector3(0, 0, -1);
                 direction.applyQuaternion(camera.quaternion);
                 
-                // Position 1 meter in front of camera
-                const position = new THREE.Vector3();
-                camera.getWorldPosition(position);
-                position.add(direction.multiplyScalar(1));
+                let position, rotation;
                 
-                // Create model entity
+                if (hasSurfaceDetection && lastHitPose) {
+                    // Place at hit test position
+                    position = new THREE.Vector3(
+                        lastHitPose.transform.position.x,
+                        lastHitPose.transform.position.y,
+                        lastHitPose.transform.position.z
+                    );
+                    
+                    // Align with surface normal if available
+                    rotation = new THREE.Quaternion().copy(camera.quaternion);
+                } else {
+                    // Place 1 meter in front of camera as fallback
+                    position = new THREE.Vector3();
+                    camera.getWorldPosition(position);
+                    position.add(direction.multiplyScalar(1));
+                    rotation = new THREE.Quaternion().copy(camera.quaternion);
+                }
+                
+                // Create model entity with advanced features
                 const model = document.createElement('a-entity');
-                model.setAttribute('gltf-model', `url(${modelUrl})`);
-                model.setAttribute('scale', '0.5 0.5 0.5');
+                model.setAttribute('gltf-model', `url(${currentModelUrl})`);
+                model.setAttribute('scale', '0.01 0.01 0.01');
                 model.setAttribute('position', position);
-                model.setAttribute('animation', {
+                model.setAttribute('rotation', new THREE.Euler().setFromQuaternion(rotation));
+                
+                // Add animation
+                model.setAttribute('animation__scale', {
                     property: 'scale',
-                    to: '1 1 1',
-                    dur: 500,
+                    to: '0.5 0.5 0.5',
+                    dur: 1000,
                     easing: 'easeOutElastic'
                 });
+                
+                // Add interaction components
+                model.setAttribute('class', 'interactive');
+                model.setAttribute('clickable', '');
+                
+                // Add physics properties if needed
+                model.setAttribute('dynamic-body', 'shape: auto; mass: 1');
                 
                 dynamicContent.appendChild(model);
                 modelPlaced = true;
                 reticle.style.display = 'none';
                 
-                // Add animation or interaction components as needed
+                // Add click handler for interaction
                 model.addEventListener('click', () => {
-                    model.setAttribute('animation', {
-                        property: 'rotation',
-                        to: '0 360 0',
-                        dur: 2000,
-                        loop: true
-                    });
+                    // Toggle rotation animation
+                    if (model.getAttribute('animation__rotate')) {
+                        model.removeAttribute('animation__rotate');
+                    } else {
+                        model.setAttribute('animation__rotate', {
+                            property: 'rotation',
+                            to: '0 360 0',
+                            dur: 5000,
+                            loop: true,
+                            easing: 'linear'
+                        });
+                    }
                 });
+                
+                // Add gesture recognition for scaling
+                let initialDistance = 0;
+                let initialScale = new THREE.Vector3(0.5, 0.5, 0.5);
+                
+                model.addEventListener('pinchstarted', (e) => {
+                    initialDistance = e.detail.distance;
+                    initialScale = model.object3D.scale.clone();
+                });
+                
+                model.addEventListener('pinchmoved', (e) => {
+                    const scaleFactor = e.detail.distance / initialDistance;
+                    const newScale = initialScale.clone().multiplyScalar(scaleFactor);
+                    // Limit scaling
+                    newScale.clamp(new THREE.Vector3(0.1, 0.1, 0.1), new THREE.Vector3(3, 3, 3));
+                    model.object3D.scale.copy(newScale);
+                });
+                
+                console.log("Model placed at:", position);
             }
+            
+            // Change the current model
+            function showModelSelector() {
+                modelSelector.style.display = 'flex';
+            }
+            
+            function hideModelSelector() {
+                modelSelector.style.display = 'none';
+            }
+            
+            function changeModel(newModelUrl) {
+                currentModelUrl = newModelUrl;
+                
+                // Remove all existing models
+                while (dynamicContent.firstChild) {
+                    dynamicContent.removeChild(dynamicContent.firstChild);
+                }
+                
+                modelPlaced = false;
+                reticle.style.display = 'block';
+            }
+            
+            // Toggle debug mode
+            function toggleDebugMode() {
+                debugMode = !debugMode;
+                debugInfo.style.display = debugMode ? 'block' : 'none';
+                planeVisualization.style.display = debugMode && planeDetectionEnabled ? 'block' : 'none';
+                groundPlane.setAttribute('visible', debugMode && planeDetectionEnabled);
+                
+                if (debugMode) {
+                    debugButton.textContent = 'Hide Debug';
+                    debugButton.style.background = 'linear-gradient(145deg, rgba(255,100,0,0.8), rgba(200,50,0,0.8))';
+                } else {
+                    debugButton.textContent = 'Debug Info';
+                    debugButton.style.background = 'linear-gradient(145deg, rgba(0,150,255,0.8), rgba(0,80,200,0.8))';
+                }
+            }
+            
+            // Event listeners
+            startButton.addEventListener('click', initARSession);
+            placeButton.addEventListener('click', placeModel);
+            debugButton.addEventListener('click', toggleDebugMode);
+            changeModelButton.addEventListener('click', showModelSelector);
+            document.getElementById('close-selector').addEventListener('click', hideModelSelector);
+            
+            // Model selection handlers
+            document.querySelectorAll('.model-option').forEach(button => {
+                button.addEventListener('click', () => {
+                    changeModel(button.dataset.model);
+                    hideModelSelector();
+                });
+            });
             
             // Handle screen taps
             document.addEventListener('click', (e) => {
-                if (!modelPlaced && hasSurfaceDetection) {
+                if (!modelPlaced && hasSurfaceDetection && e.target === document.body) {
                     placeModel();
                 }
-            });
-            
-            // Start button handler
-            startButton.addEventListener('click', () => {
-                initARSession();
             });
             
             // Check for WebXR support
@@ -245,14 +609,25 @@
                 navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
                     if (supported) {
                         startButton.style.display = 'block';
-                        loading.textContent = "Ready to start AR experience";
+                        loading.textContent = "Ready to start advanced AR experience";
                     } else {
-                        loading.textContent = "AR not supported on your device";
+                        loading.textContent = "Advanced AR not supported on your device";
                     }
+                }).catch(() => {
+                    loading.textContent = "Error checking AR support";
                 });
             } else {
                 loading.textContent = "WebXR not supported in your browser";
             }
+            
+            // Handle resize
+            window.addEventListener('resize', () => {
+                if (scene.camera) {
+                    scene.camera.aspect = window.innerWidth / window.innerHeight;
+                    scene.camera.updateProjectionMatrix();
+                    scene.renderer.setSize(window.innerWidth, window.innerHeight);
+                }
+            });
         });
     </script>
 </body>
