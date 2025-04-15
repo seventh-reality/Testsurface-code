@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Universal AR Viewer</title>
     <style>
         body {
@@ -11,27 +11,32 @@
             font-family: -apple-system, BlinkMacSystemFont, sans-serif;
             background-color: #f0f0f0;
             text-align: center;
+            overflow-x: hidden;
         }
         
         #container {
             max-width: 600px;
             margin: 0 auto;
             padding: 20px;
+            box-sizing: border-box;
         }
         
         h1 {
             color: #333;
+            margin-top: 0;
         }
         
         button {
             background: #007AFF;
             color: white;
             border: none;
-            padding: 12px 24px;
+            padding: 15px 30px;
             border-radius: 8px;
             font-size: 18px;
             cursor: pointer;
             margin: 10px 5px;
+            width: 80%;
+            max-width: 300px;
         }
         
         button:disabled {
@@ -43,6 +48,7 @@
             margin: 20px 0;
             padding: 15px;
             border-radius: 8px;
+            background: rgba(0,0,0,0.05);
         }
         
         .instructions {
@@ -51,6 +57,7 @@
             border-radius: 8px;
             margin-top: 30px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: left;
         }
         
         #webxr-container {
@@ -68,11 +75,49 @@
             top: 20px;
             left: 20px;
             z-index: 1001;
+            padding: 10px 20px;
         }
         
         #loading {
             display: none;
             margin: 20px 0;
+            font-size: 16px;
+        }
+        
+        #permission-prompt {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 1002;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        
+        #permission-prompt p {
+            margin-bottom: 30px;
+            text-align: center;
+            font-size: 18px;
+        }
+        
+        #permission-prompt button {
+            margin: 10px;
+            width: 200px;
+        }
+        
+        #grant-permission {
+            background: #4CAF50;
+        }
+        
+        #deny-permission {
+            background: #f44336;
         }
     </style>
     <!-- Model Viewer for AR Quick Look (iOS) -->
@@ -102,13 +147,19 @@
         <button id="ar-button" style="display: none;">View in AR</button>
         <div id="loading">Loading AR experience...</div>
         
-        <div id="status">Detecting your device...</div>
+        <div id="status">Detecting your device capabilities...</div>
         
         <div class="instructions">
             <h3>How to use:</h3>
+            <p><strong>On iPhone:</strong></p>
             <p>1. Tap "View in AR" button</p>
             <p>2. Point your camera at a flat surface</p>
-            <p>3. Tap to place the model (on Android)</p>
+            <p>3. Move around to view from different angles</p>
+            
+            <p><strong>On Android:</strong></p>
+            <p>1. Tap "View in AR" button</p>
+            <p>2. Allow camera permission when asked</p>
+            <p>3. Point at a flat surface and tap to place the model</p>
             <p>4. Move around to view from different angles</p>
         </div>
     </div>
@@ -116,6 +167,13 @@
     <!-- WebXR Container (Android) -->
     <div id="webxr-container"></div>
     <button id="exit-webxr" style="display: none;">Exit AR</button>
+    
+    <!-- Camera Permission Prompt -->
+    <div id="permission-prompt">
+        <p>This app needs camera permission to work with AR.</p>
+        <button id="grant-permission">Grant Permission</button>
+        <button id="deny-permission">Deny</button>
+    </div>
 
     <script>
         document.addEventListener('DOMContentLoaded', async () => {
@@ -126,36 +184,62 @@
             const webxrContainer = document.getElementById('webxr-container');
             const exitWebxrBtn = document.getElementById('exit-webxr');
             const loadingEl = document.getElementById('loading');
+            const permissionPrompt = document.getElementById('permission-prompt');
+            const grantPermissionBtn = document.getElementById('grant-permission');
+            const denyPermissionBtn = document.getElementById('deny-permission');
             
             // Detect device type
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
             const isAndroid = /Android/.test(navigator.userAgent);
+            
+            // Track if we're using WebXR
+            let renderer;
+            let hasCameraPermission = false;
             
             // Initialize WebXR Polyfill
             if (!('xr' in navigator)) {
                 new WebXRPolyfill();
             }
             
-            // Track if we're using WebXR
-            let renderer;
+            // Check camera permission
+            async function checkCameraPermission() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    stream.getTracks().forEach(track => track.stop());
+                    hasCameraPermission = true;
+                    return true;
+                } catch (error) {
+                    console.log("Camera permission denied:", error);
+                    return false;
+                }
+            }
+            
+            // Show permission prompt
+            function showPermissionPrompt() {
+                permissionPrompt.style.display = 'flex';
+            }
             
             // Check AR capabilities
             async function checkARSupport() {
                 loadingEl.style.display = 'block';
+                statusEl.textContent = 'Checking device capabilities...';
                 
                 // iOS - AR Quick Look
                 if (isIOS) {
                     try {
                         // Wait for model-viewer to be defined
-                        await customElements.whenDefined('model-viewer');
+                        if (!customElements.get('model-viewer')) {
+                            await customElements.whenDefined('model-viewer');
+                        }
+                        
                         modelViewer.style.display = 'block';
                         arButton.style.display = 'inline-block';
-                        statusEl.textContent = 'Your device supports AR Quick Look';
+                        statusEl.textContent = 'Your device supports AR Quick Look. Tap "View in AR" to start.';
                         loadingEl.style.display = 'none';
                         return 'quicklook';
                     } catch (e) {
                         console.error('iOS AR setup failed:', e);
-                        statusEl.textContent = 'AR setup failed on your device';
+                        statusEl.textContent = 'AR setup failed on your device. Please try again.';
                         statusEl.style.background = '#ffebee';
                         loadingEl.style.display = 'none';
                         return null;
@@ -168,7 +252,7 @@
                         const supported = await navigator.xr.isSessionSupported('immersive-ar');
                         if (supported) {
                             arButton.style.display = 'inline-block';
-                            statusEl.textContent = 'Your device supports WebXR AR';
+                            statusEl.textContent = 'Your device supports WebXR AR. Tap "View in AR" to start.';
                             loadingEl.style.display = 'none';
                             return 'webxr';
                         }
@@ -191,8 +275,14 @@
                 
                 try {
                     // Check camera permission
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    stream.getTracks().forEach(track => track.stop());
+                    if (!hasCameraPermission) {
+                        const hasPermission = await checkCameraPermission();
+                        if (!hasPermission) {
+                            showPermissionPrompt();
+                            loadingEl.style.display = 'none';
+                            return;
+                        }
+                    }
                     
                     // Set up Three.js scene
                     const scene = new THREE.Scene();
@@ -225,12 +315,12 @@
                             model.scale.set(0.5, 0.5, 0.5);
                             model.visible = false;
                             scene.add(model);
-                            statusEl.textContent = 'Model loaded. Tap to place.';
+                            statusEl.textContent = 'Model loaded. Point at a surface and tap to place.';
                         },
                         undefined,
                         (error) => {
                             console.error('Error loading model:', error);
-                            statusEl.textContent = 'Error loading model';
+                            statusEl.textContent = 'Error loading model. Please try again.';
                         }
                     );
                     
@@ -250,6 +340,7 @@
                         if (model) {
                             model.visible = true;
                             model.position.copy(controller.position);
+                            statusEl.textContent = 'Model placed. Move around to view.';
                         }
                     });
                     scene.add(controller);
@@ -264,7 +355,10 @@
                         renderer.setAnimationLoop(null);
                         webxrContainer.style.display = 'none';
                         exitWebxrBtn.style.display = 'none';
-                        webxrContainer.removeChild(renderer.domElement);
+                        if (webxrContainer.contains(renderer.domElement)) {
+                            webxrContainer.removeChild(renderer.domElement);
+                        }
+                        statusEl.textContent = 'AR session ended. Tap "View in AR" to start again.';
                     });
                     
                 } catch (error) {
@@ -272,6 +366,11 @@
                     statusEl.textContent = 'Failed to start AR: ' + error.message;
                     statusEl.style.background = '#ffebee';
                     loadingEl.style.display = 'none';
+                    
+                    // If permission denied, show prompt
+                    if (error.message.includes('permission') || error.name === 'NotAllowedError') {
+                        showPermissionPrompt();
+                    }
                 }
             }
             
@@ -308,8 +407,39 @@
                 if (session) session.end();
             });
             
+            grantPermissionBtn.addEventListener('click', async () => {
+                permissionPrompt.style.display = 'none';
+                loadingEl.style.display = 'block';
+                statusEl.textContent = 'Requesting camera permission...';
+                
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    stream.getTracks().forEach(track => track.stop());
+                    hasCameraPermission = true;
+                    await initWebXR();
+                } catch (error) {
+                    console.error('Camera permission denied:', error);
+                    statusEl.textContent = 'Camera permission is required for AR.';
+                    statusEl.style.background = '#ffebee';
+                    loadingEl.style.display = 'none';
+                }
+            });
+            
+            denyPermissionBtn.addEventListener('click', () => {
+                permissionPrompt.style.display = 'none';
+                statusEl.textContent = 'Camera permission is required for AR.';
+                statusEl.style.background = '#ffebee';
+            });
+            
             // Initialize
             await checkARSupport();
+            
+            // On iOS, check if we can show the AR button immediately
+            if (isIOS && customElements.get('model-viewer')) {
+                modelViewer.style.display = 'block';
+                arButton.style.display = 'inline-block';
+                loadingEl.style.display = 'none';
+            }
         });
     </script>
 </body>
