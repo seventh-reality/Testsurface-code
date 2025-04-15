@@ -157,6 +157,7 @@
     let initialAngle = 0;
     let initialRotation = 0;
     let modelBoundingBox = new THREE.Box3();
+    let modelAnchor = null; // Reference space anchor for the model
 
     // Check for WebXR support
     async function checkXRSupport() {
@@ -440,19 +441,51 @@
     }
 
     // Place model in WebXR mode
-    function placeModel() {
+    async function placeModel() {
       if (!isModelPlaced && reticle.visible) {
-        model.position.setFromMatrixPosition(reticle.matrix);
-        model.quaternion.setFromRotationMatrix(reticle.matrix);
-        model.visible = true;
-        isModelPlaced = true;
+        // Create an anchor at the reticle position
+        const referenceSpace = renderer.xr.getReferenceSpace();
+        const pose = frame.getViewerPose(referenceSpace);
         
-        // Change reticle color to indicate placement
-        reticle.children.forEach(child => {
-          if (child.material) {
-            child.material.color.setHex(0x00ff00);
+        if (pose) {
+          const anchorPose = new XRRigidTransform(
+            new DOMPointReadOnly(reticle.position.x, reticle.position.y, reticle.position.z),
+            { x: 0, y: 0, z: 0, w: 1 } // Default orientation
+          );
+          
+          try {
+            // Create an anchor at the hit test result's position
+            const anchor = await frame.session.createAnchor(anchorPose, referenceSpace);
+            modelAnchor = anchor;
+            
+            // Position the model at the anchor's position
+            model.position.set(0, 0, 0);
+            model.visible = true;
+            isModelPlaced = true;
+            
+            // Add the model to the anchor's space
+            const anchorGroup = new THREE.Group();
+            anchorGroup.matrix.fromArray(anchor.anchorSpace.getTransformTo(referenceSpace).matrix);
+            anchorGroup.add(model);
+            scene.add(anchorGroup);
+            
+            // Change reticle color to indicate placement
+            reticle.children.forEach(child => {
+              if (child.material) {
+                child.material.color.setHex(0x00ff00);
+              }
+            });
+            
+            console.log("Model anchored to real world position");
+          } catch (e) {
+            console.error("Failed to create anchor:", e);
+            // Fallback to non-anchored placement
+            model.position.setFromMatrixPosition(reticle.matrix);
+            model.quaternion.setFromRotationMatrix(reticle.matrix);
+            model.visible = true;
+            isModelPlaced = true;
           }
-        });
+        }
       }
     }
 
@@ -489,6 +522,7 @@
       
       hammerManager.on("pan", (e) => {
         if (isModelPlaced && e.pointers.length === 1) {
+          // Convert screen coordinates to world position
           const vector = new THREE.Vector3(
             (e.center.x / window.innerWidth) * 2 - 1,
             -(e.center.y / window.innerHeight) * 2 + 1,
@@ -496,11 +530,21 @@
           );
           vector.unproject(camera);
           
+          // Calculate position on the ground plane
           const direction = vector.sub(camera.position).normalize();
           const distance = -camera.position.y / direction.y;
           const position = camera.position.clone().add(direction.multiplyScalar(distance));
           
-          model.position.copy(position);
+          // Update model position relative to its anchor
+          if (modelAnchor) {
+            const anchorMatrix = new THREE.Matrix4().fromArray(
+              modelAnchor.anchorSpace.getTransformTo(renderer.xr.getReferenceSpace()).matrix
+            );
+            const worldPosition = position.clone().sub(new THREE.Vector3().setFromMatrixPosition(anchorMatrix));
+            model.position.copy(worldPosition);
+          } else {
+            model.position.copy(position);
+          }
         }
       });
       
@@ -617,6 +661,9 @@
     // WebXR render loop
     function render(timestamp, frame) {
       if (!frame) return;
+      
+      // Store the frame for use in the placeModel function
+      window.frame = frame;
       
       // Update reticle pulse animation
       if (reticle && !isModelPlaced) {
