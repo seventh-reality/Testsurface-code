@@ -456,6 +456,37 @@
         // Create advanced reticle
         reticle = createReticle();
         scene.add(reticle);
+        // Modify your createReticle function to add this:
+reticleGroup.userData = {
+  lastPositions: [],
+  addPosition: function(position) {
+    this.lastPositions.push({ position, time: performance.now() });
+    // Keep only recent positions
+    if (this.lastPositions.length > 10) {
+      this.lastPositions.shift();
+    }
+  },
+  getStability: function() {
+    if (this.lastPositions.length < 2) return 0;
+    
+    let totalMovement = 0;
+    for (let i = 1; i < this.lastPositions.length; i++) {
+      totalMovement += this.lastPositions[i].position.distanceTo(
+        this.lastPositions[i-1].position
+      );
+    }
+    
+    const avgMovement = totalMovement / (this.lastPositions.length - 1);
+    const timeSpan = this.lastPositions[this.lastPositions.length-1].time - 
+                    this.lastPositions[0].time;
+    
+    // Normalize movement to meters per second
+    const movementPerSecond = avgMovement / (timeSpan / 1000);
+    
+    // Convert to stability score (0-1)
+    return Math.max(0, 1 - (movementPerSecond / config.tracking.stability.movementThreshold));
+  }
+};
         
         // Create a group to hold the model for stable positioning
         modelGroup = new THREE.Group();
@@ -557,18 +588,30 @@
     }
 
     // Set up hit test source for surface detection
-    async function setupHitTestSource() {
+   // Replace the existing setupHitTestSource function with this improved version
+async function setupHitTestSource() {
   if (!xrSession || !referenceSpace || hitTestSourceRequested) return;
   
   try {
-    const hitTestSource = await xrSession.requestHitTestSource({
+    // First try with the most accurate configuration
+    hitTestSource = await xrSession.requestHitTestSource({
       space: referenceSpace,
       entityTypes: ['plane', 'mesh'],
-      offsetRay: new XRRay(new DOMPoint(0, 0, 0))  // Fixed - added closing parenthesis
+      offsetRay: new XRRay(new DOMPoint(0, 0, 0), { 
+        direction: {x: 0, y: -1, z: 0, w: 1} // Pointing downward
+      })
     });
     
     hitTestSourceRequested = true;
-    window.hitTestSource = hitTestSource; // For debugging
+    
+    // Add session end handler to clean up
+    xrSession.addEventListener('end', () => {
+      hitTestSourceRequested = false;
+      if (hitTestSource) {
+        hitTestSource.cancel();
+        hitTestSource = null;
+      }
+    });
     
     if (config.debug) {
       console.log("Hit test source created successfully");
@@ -576,25 +619,138 @@
   } catch (e) {
     console.error("Failed to create hit test source:", e);
     
-    // Fallback to viewer space hit test
+    // Fallback to simpler configuration
     try {
-      const hitTestSource = await xrSession.requestHitTestSource({
+      hitTestSource = await xrSession.requestHitTestSource({
         space: referenceSpace,
-        entityTypes: ['plane', 'mesh'],
+        entityTypes: ['plane']
       });
       
       hitTestSourceRequested = true;
-      window.hitTestSource = hitTestSource;
       
       if (config.debug) {
         console.log("Fallback hit test source created successfully");
       }
     } catch (e) {
       console.error("Failed to create fallback hit test source:", e);
+      // Last resort - try without specifying entity types
+      try {
+        hitTestSource = await xrSession.requestHitTestSource({
+          space: referenceSpace
+        });
+        hitTestSourceRequested = true;
+      } catch (e) {
+        console.error("Completely failed to create hit test source:", e);
+      }
     }
   }
 }
 
+// Replace the render function with this improved version
+function render(timestamp, frame) {
+  if (!frame) return;
+  
+  // Get the XRViewerPose for the current frame
+  const pose = frame.getViewerPose(referenceSpace);
+  if (!pose) return;
+  
+  // Update camera position
+  camera.matrix.fromArray(pose.transform.matrix);
+  camera.matrix.decompose(camera.position, camera.quaternion, camera.scale);
+  camera.updateMatrixWorld(true);
+  
+  // Process hit test results if we have a hit test source
+  if (hitTestSource && !isModelPlaced) {
+    const hitTestResults = frame.getHitTestResults(hitTestSource);
+    
+    if (hitTestResults.length > 0) {
+      const hit = hitTestResults[0];
+      const hitPose = hit.getPose(referenceSpace);
+      
+      if (hitPose) {
+        reticle.visible = true;
+        reticle.matrix.fromArray(hitPose.transform.matrix);
+        
+        // Calculate stability metrics
+        const currentPosition = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
+        const currentTime = performance.now();
+        
+        if (lastStablePosition) {
+          // Calculate movement since last frame
+          const distanceMoved = lastStablePosition.distanceTo(currentPosition);
+          const timeElapsed = currentTime - lastStabilityUpdateTime;
+          
+          // Normalize movement based on time
+          const normalizedMovement = distanceMoved / Math.max(1, timeElapsed);
+          
+          // Update stability score (lower movement = higher stability)
+          stabilityScore = Math.max(0, Math.min(1, 
+            stabilityScore * 0.8 + (1 - Math.min(1, normalizedMovement * 10)) * 0.2
+          ));
+          
+          // Update reticle appearance
+          updateReticleStability(stabilityScore);
+          
+          // Update surface indicator
+          updateSurfaceIndicator(currentPosition);
+        }
+        
+        lastStablePosition = currentPosition.clone();
+        lastStabilityUpdateTime = currentTime;
+      }
+    } else {
+      reticle.visible = false;
+      stabilityScore = 0;
+      updateReticleStability(0);
+      document.getElementById('surface-indicator').style.display = 'none';
+    }
+  }
+  
+  // Render the scene
+  renderer.render(scene, camera);
+}
+
+// Improved surface indicator update
+function updateSurfaceIndicator(position) {
+  const indicator = document.getElementById('surface-indicator');
+  if (!indicator) return;
+  
+  // Convert 3D position to 2D screen coordinates
+  const vector = position.clone().project(camera);
+  
+  const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+  const y = -(vector.y * 0.5 - 0.5) * window.innerHeight;
+  
+  // Only show if position is in front of camera
+  if (vector.z > 0 && vector.z <= 1) {
+    indicator.style.left = `${x - 20}px`;
+    indicator.style.top = `${y - 20}px`;
+    indicator.style.display = 'block';
+    
+    // Add pulse animation based on stability
+    const pulseScale = 0.8 + (0.4 * stabilityScore);
+    indicator.style.transform = `scale(${pulseScale})`;
+    indicator.style.opacity = stabilityScore;
+  } else {
+    indicator.style.display = 'none';
+  }
+}
+// Add this to your initWebXR function after creating the session:
+xrSession.addEventListener('inputsourceschange', (event) => {
+  // Re-request hit test source if we lost it
+  if (!hitTestSource && hitTestSourceRequested) {
+    setupHitTestSource();
+  }
+});
+    // Add this to your config:
+tracking: {
+  // ... existing config ...
+  stability: {
+    movementThreshold: 0.01, // meters per second
+    timeWindow: 300, // milliseconds
+    requiredStableFrames: 10
+  }
+}
     // Initialize AR.js fallback mode with enhanced features
     async function initARJS() {
       try {
