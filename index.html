@@ -558,42 +558,42 @@
 
     // Set up hit test source for surface detection
     async function setupHitTestSource() {
-      if (!xrSession || !referenceSpace || hitTestSourceRequested) return;
-      
-      try {
-        const hitTestSource = await xrSession.requestHitTestSource({
-          space: referenceSpace,
-          entityTypes: ['plane', 'mesh'],
-          offsetRay: new XRRay(new DOMPoint(0, 0, 0),
-        });
-        
-        hitTestSourceRequested = true;
-        window.hitTestSource = hitTestSource; // For debugging
-        
-        if (config.debug) {
-          console.log("Hit test source created successfully");
-        }
-      } catch (e) {
-        console.error("Failed to create hit test source:", e);
-        
-        // Fallback to viewer space hit test
-        try {
-          const hitTestSource = await xrSession.requestHitTestSource({
-            space: referenceSpace,
-            entityTypes: ['plane', 'mesh'],
-          });
-          
-          hitTestSourceRequested = true;
-          window.hitTestSource = hitTestSource;
-          
-          if (config.debug) {
-            console.log("Fallback hit test source created successfully");
-          }
-        } catch (e) {
-          console.error("Failed to create fallback hit test source:", e);
-        }
-      }
+  if (!xrSession || !referenceSpace || hitTestSourceRequested) return;
+  
+  try {
+    const hitTestSource = await xrSession.requestHitTestSource({
+      space: referenceSpace,
+      entityTypes: ['plane', 'mesh'],
+      offsetRay: new XRRay(new DOMPoint(0, 0, 0))  // Fixed - added closing parenthesis
+    });
+    
+    hitTestSourceRequested = true;
+    window.hitTestSource = hitTestSource; // For debugging
+    
+    if (config.debug) {
+      console.log("Hit test source created successfully");
     }
+  } catch (e) {
+    console.error("Failed to create hit test source:", e);
+    
+    // Fallback to viewer space hit test
+    try {
+      const hitTestSource = await xrSession.requestHitTestSource({
+        space: referenceSpace,
+        entityTypes: ['plane', 'mesh'],
+      });
+      
+      hitTestSourceRequested = true;
+      window.hitTestSource = hitTestSource;
+      
+      if (config.debug) {
+        console.log("Fallback hit test source created successfully");
+      }
+    } catch (e) {
+      console.error("Failed to create fallback hit test source:", e);
+    }
+  }
+}
 
     // Initialize AR.js fallback mode with enhanced features
     async function initARJS() {
