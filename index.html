@@ -743,14 +743,15 @@ xrSession.addEventListener('inputsourceschange', (event) => {
   }
 });
     // Add this to your config:
-tracking: {
+    const tracking = {
   // ... existing config ...
   stability: {
     movementThreshold: 0.01, // meters per second
-    timeWindow: 300, // milliseconds
+    timeWindow: 300,         // milliseconds
     requiredStableFrames: 10
   }
-}
+};
+
     // Initialize AR.js fallback mode with enhanced features
     async function initARJS() {
       try {
