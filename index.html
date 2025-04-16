@@ -1313,18 +1313,35 @@ xrSession.addEventListener('inputsourceschange', (event) => {
       }
     });
 
-    // Initialize on load
-    window.addEventListener('load', () => {
-      window.addEventListener('resize', onWindowResize);
+   // Initialize on load
+window.addEventListener('DOMContentLoaded', () => {
+  window.addEventListener('resize', onWindowResize);
+  
+  // Check for WebXR support immediately to show appropriate UI
+  checkXRSupport().then(supported => {
+    if (!supported) {
+      document.getElementById('support-message').innerHTML = 
+        '<p>For the best experience, use a device with WebXR support (iOS 15+ or Android with Chrome 81+).</p>';
+    }
+  });
+
+  // Move the start button event listener inside DOMContentLoaded
+  const startButton = document.getElementById('start-button');
+  if (startButton) {
+    startButton.addEventListener('click', async () => {
+      const supported = await checkXRSupport();
+      startButton.disabled = true;
       
-      // Check for WebXR support immediately to show appropriate UI
-      checkXRSupport().then(supported => {
-        if (!supported) {
-          document.getElementById('support-message').innerHTML = 
-            '<p>For the best experience, use a device with WebXR support (iOS 15+ or Android with Chrome 81+).</p>';
-        }
-      });
+      if (supported) {
+        initWebXR();
+      } else {
+        fallbackToARJS();
+      }
     });
+  } else {
+    console.error("Start button not found in the DOM");
+  }
+});
   </script>
 </body>
 </html>
