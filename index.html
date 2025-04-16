@@ -952,7 +952,7 @@
     }
 
     // Set up gesture controls for AR.js
-    function setupARJSGestureControls(modelEl) {
+ function setupARJSGestureControls(modelEl) {
       const container = document.getElementById('ar-container');
       hammerManager = new Hammer.Manager(container, {
         recognizers: [
@@ -966,38 +966,25 @@
       let startScale = config.initialScale;
       let startRotation = 0;
       
-      hammerManager.on("panstart", (e) => {
+      // [Other event handlers remain the same]
+      
+      hammerManager.on("pinchstart", (e) => {
         if (isModelPlaced) {
-          const pos = modelEl.getAttribute('position');
-          startPosition = new THREE.Vector3(pos.x, pos.y, pos.z);
+          startScale = modelEl.getAttribute('scale').x;
         }
       });
       
-      hammerManager.on("pan", (e) => {
-        if (isModelPlaced && e.pointers.length === 1 && startPosition) {
-          const camera = arjsScene.camera;
-          const movementX = e.deltaX / window.innerWidth * 2;
-          const movementY = -e.deltaY / window.innerHeight * 2;
-          
-          // Calculate movement in world space
-          const movement = new THREE.Vector3(movementX, movementY, 0);
-          movement.unproject(camera);
-          movement.sub(camera.position).normalize();
-          
-          // Scale movement by distance to model
-          const distance = new THREE.Vector3().copy(startPosition).sub(camera.position).length();
-          const scaledMovement = movement.multiplyScalar(distance * 0.5);
-          
-          const newPosition = new THREE.Vector3(
-            startPosition.x + scaledMovement.x,
-            startPosition.y + scaledMovement.y,
-            startPosition.z + scaledMovement.z
-          );
-          
-          modelEl.setAttribute('position', newPosition);
+      hammerManager.on("pinch", (e) => {
+        if (isModelPlaced) {
+          const newScale = Math.min(config.maxScale, 
+                                  Math.max(config.minScale, startScale * e.scale));
+          modelEl.setAttribute('scale', {
+            x: newScale,
+            y: newScale,
+            z: newScale
+          });
         }
       });
-      
       hammerManager.on("pinchstart", (e) => {
         if (isModelPlaced) {
           startScale = modelEl.getAttribute('scale').x;
