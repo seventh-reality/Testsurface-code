@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <title>AR Model Interaction</title>
+  <title>Advanced AR Model Interaction</title>
   <!-- A-Frame -->
   <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe.min.js"></script>
   <!-- AR.js for fallback -->
@@ -14,6 +14,8 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
   <!-- Hammer.js for gestures -->
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <!-- WebXR Polyfill for broader device support -->
+  <script src="https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.min.js"></script>
   <style>
     body {
       margin: 0;
@@ -55,6 +57,10 @@
       text-shadow: 1px 1px 2px black;
       z-index: 10;
       pointer-events: none;
+      background: rgba(0,0,0,0.5);
+      padding: 10px;
+      border-radius: 5px;
+      margin: 0 20px;
     }
     #start-button {
       padding: 12px 24px;
@@ -65,10 +71,20 @@
       font-size: 16px;
       cursor: pointer;
       margin-top: 20px;
+      transition: background 0.3s;
+    }
+    #start-button:hover {
+      background: #45a049;
+    }
+    #start-button:disabled {
+      background: #cccccc;
+      cursor: not-allowed;
     }
     .unsupported {
       color: #ff4444;
       margin-top: 20px;
+      text-align: center;
+      max-width: 80%;
     }
     #surface-indicator {
       position: fixed;
@@ -79,6 +95,8 @@
       pointer-events: none;
       z-index: 20;
       display: none;
+      transition: transform 0.1s;
+      box-shadow: 0 0 10px rgba(255,255,255,0.5);
     }
     #gesture-help {
       position: fixed;
@@ -87,34 +105,67 @@
       right: 0;
       text-align: center;
       color: white;
-      background: rgba(0,0,0,0.5);
+      background: rgba(0,0,0,0.7);
       padding: 10px;
+      border-radius: 5px;
       z-index: 15;
       display: none;
+      margin: 0 20px;
+    }
+    #stability-meter {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      width: 100px;
+      height: 10px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 5px;
+      overflow: hidden;
+      z-index: 30;
+      display: none;
+    }
+    #stability-progress {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(to right, #ff4444, #ffbb33, #00C851);
+      transition: width 0.3s;
     }
     canvas {
       display: block;
       width: 100% !important;
       height: 100% !important;
     }
+    #debug-info {
+      position: fixed;
+      top: 40px;
+      left: 20px;
+      color: white;
+      background: rgba(0,0,0,0.5);
+      padding: 5px;
+      font-size: 12px;
+      z-index: 30;
+      display: none;
+    }
   </style>
 </head>
 <body>
   <div id="loading">
-    <h1>AR Model Interaction</h1>
+    <h1>Advanced AR Model Interaction</h1>
     <p>Initializing AR environment...</p>
     <div id="support-message"></div>
     <button id="start-button">Start AR Experience</button>
   </div>
 
-  <div id="info">Move device to detect surfaces. Tap to place the model.</div>
+  <div id="info">Move device slowly to detect surfaces. Tap to place the model.</div>
   <div id="gesture-help">Use one finger to move, two fingers to rotate/scale</div>
   <div id="surface-indicator"></div>
+  <div id="stability-meter"><div id="stability-progress"></div></div>
+  <div id="debug-info"></div>
   
   <div id="ar-container"></div>
 
   <script>
-    // Configuration
+    // Enhanced Configuration
     const config = {
       modelUrl: 'all.glb',
       debug: true,
@@ -123,6 +174,13 @@
       maxScale: 2.0,
       stabilityThreshold: 0.05,
       modelUnits: 'meters',
+      tracking: {
+        planeDetection: true,
+        stabilizationFrames: 30,
+        minFeaturePoints: 30,
+        hitTestRefreshRate: 10,
+        environmentEstimation: true
+      },
       reticle: {
         ringRadius: 0.15,
         ringThickness: 0.05,
@@ -137,7 +195,9 @@
         gridSize: 0.3,
         gridDivisions: 8,
         gridColor: 0xffffff,
-        gridOpacity: 0.3
+        gridOpacity: 0.3,
+        stableColor: 0x00ff00,
+        unstableColor: 0xff4444
       }
     };
 
@@ -157,37 +217,84 @@
     let initialAngle = 0;
     let initialRotation = 0;
     let modelBoundingBox = new THREE.Box3();
-    let modelAnchor = null; // Reference space anchor for the model
-    let modelGroup = null; // Group to hold the model for stable positioning
+    let modelAnchor = null;
+    let modelGroup = null;
+    let frameCounter = 0;
+    let stabilityScore = 0;
+    let hitTestCounter = 0;
+    let lastStablePosition = null;
+    let featurePoints = [];
+    let planeMeshes = [];
+    let isSessionStarted = false;
+    let xrSession = null;
+    let hitTestSource = null;
+    let hitTestSourceRequested = false;
+    let referenceSpace = null;
+    let lastHitTestPose = null;
+    let lastStabilityUpdateTime = 0;
 
-    // Check for WebXR support
+    // Enhanced WebXR support check
     async function checkXRSupport() {
-      if (!navigator.xr) return false;
+      if (!navigator.xr) {
+        if (window.WebXRPolyfill) {
+          new WebXRPolyfill();
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        if (!navigator.xr) return false;
+      }
+      
       try {
-        return await navigator.xr.isSessionSupported('immersive-ar');
+        const supported = await navigator.xr.isSessionSupported('immersive-ar');
+        if (supported) {
+          return true;
+        } else {
+          // Check for ARCore/ARKit support through user agent
+          const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+          const isAndroid = /android/i.test(userAgent);
+          const isIOS = /iPad|iPhone|iPod/.test(userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+          
+          if ((isAndroid && !userAgent.includes('Chrome/')) || 
+              (isIOS && !window.WebKitPlaybackTargetAvailabilityEvent)) {
+            return false;
+          }
+          return false;
+        }
       } catch (e) {
         console.error("XR support check failed:", e);
         return false;
       }
     }
 
-    // Check camera permissions
+    // Check camera permissions with enhanced error handling
     async function checkCameraPermissions() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        if (navigator.permissions) {
+          const permissionStatus = await navigator.permissions.query({ name: 'camera' });
+          if (permissionStatus.state === 'denied') {
+            return false;
+          }
+        }
+        
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          } 
+        });
         stream.getTracks().forEach(track => track.stop());
         return true;
       } catch (e) {
-        console.error("Camera permission denied:", e);
+        console.error("Camera permission error:", e);
         return false;
       }
     }
 
-    // Create enhanced reticle mesh
+    // Create advanced reticle with stability feedback
     function createReticle() {
       const reticleGroup = new THREE.Group();
       
-      // Outer ring
+      // Outer ring with stability indicator
       const ringGeometry = new THREE.RingGeometry(
         config.reticle.ringRadius, 
         config.reticle.ringRadius + config.reticle.ringThickness, 
@@ -197,13 +304,14 @@
       const ringMaterial = new THREE.MeshBasicMaterial({
         color: config.reticle.color,
         transparent: true,
-        opacity: config.reticle.opacity
+        opacity: config.reticle.opacity,
+        side: THREE.DoubleSide
       });
       
       const ring = new THREE.Mesh(ringGeometry, ringMaterial);
       reticleGroup.add(ring);
       
-      // Inner circle
+      // Inner circle with subtle grid pattern
       const circleGeometry = new THREE.CircleGeometry(
         config.reticle.circleRadius, 
         config.reticle.circleSegments
@@ -212,13 +320,14 @@
       const circleMaterial = new THREE.MeshBasicMaterial({
         color: config.reticle.color,
         transparent: true,
-        opacity: config.reticle.opacity
+        opacity: config.reticle.opacity,
+        side: THREE.DoubleSide
       });
       
       const circle = new THREE.Mesh(circleGeometry, circleMaterial);
       reticleGroup.add(circle);
       
-      // Grid mesh
+      // Detailed grid mesh with adaptive resolution
       const gridGeometry = new THREE.PlaneGeometry(
         config.reticle.gridSize, 
         config.reticle.gridSize, 
@@ -236,13 +345,70 @@
       const grid = new THREE.Mesh(gridGeometry, gridMaterial);
       reticleGroup.add(grid);
       
+      // Add small dots at grid intersections for better spatial perception
+      const dotGeometry = new THREE.BufferGeometry();
+      const positions = [];
+      const size = config.reticle.gridSize;
+      const divisions = config.reticle.gridDivisions;
+      const step = size / divisions;
+      
+      for (let i = 0; i <= divisions; i++) {
+        for (let j = 0; j <= divisions; j++) {
+          positions.push(
+            -size/2 + i * step,
+            0,
+            -size/2 + j * step
+          );
+        }
+      }
+      
+      dotGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      const dotMaterial = new THREE.PointsMaterial({
+        color: config.reticle.gridColor,
+        size: 0.005,
+        transparent: true,
+        opacity: config.reticle.gridOpacity * 1.5
+      });
+      
+      const dots = new THREE.Points(dotGeometry, dotMaterial);
+      reticleGroup.add(dots);
+      
       reticleGroup.matrixAutoUpdate = false;
       reticleGroup.visible = false;
+      reticleGroup.userData.materials = {
+        ring: ringMaterial,
+        circle: circleMaterial,
+        grid: gridMaterial,
+        dots: dotMaterial
+      };
       
       return reticleGroup;
     }
 
-    // Initialize WebXR mode
+    // Update reticle appearance based on stability
+    function updateReticleStability(stability) {
+      if (!reticle || !reticle.userData.materials) return;
+      
+      const color = new THREE.Color().lerpColors(
+        new THREE.Color(config.reticle.unstableColor),
+        new THREE.Color(config.reticle.stableColor),
+        stability
+      );
+      
+      Object.values(reticle.userData.materials).forEach(material => {
+        if (material) {
+          material.color.copy(color);
+        }
+      });
+      
+      // Update stability meter UI
+      const stabilityProgress = document.getElementById('stability-progress');
+      if (stabilityProgress) {
+        stabilityProgress.style.width = `${stability * 100}%`;
+      }
+    }
+
+    // Initialize WebXR with enhanced tracking features
     async function initWebXR() {
       try {
         const hasPermission = await checkCameraPermissions();
@@ -251,29 +417,43 @@
           return;
         }
 
-        // Create Three.js scene
+        // Create Three.js scene with environment estimation
         scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        scene.background = null;
+        
+        camera = new THREE.PerspectiveCamera(
+          60, 
+          window.innerWidth / window.innerHeight, 
+          0.01, // Near plane very small for AR
+          100
+        );
         
         renderer = new THREE.WebGLRenderer({ 
           antialias: true, 
           alpha: true,
-          powerPreference: "high-performance"
+          powerPreference: "high-performance",
+          logarithmicDepthBuffer: true
         });
         renderer.setPixelRatio(window.devicePixelRatio || 1);
         renderer.setSize(window.innerWidth, window.innerHeight, false);
         renderer.xr.enabled = true;
+        renderer.physicallyCorrectLights = true;
+        renderer.outputEncoding = THREE.sRGBEncoding;
         document.getElementById('ar-container').appendChild(renderer.domElement);
         
-        // Lighting
+        // Enhanced lighting for environment estimation
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
         scene.add(ambientLight);
         
         const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
         directionalLight.position.set(0.5, 1, 0.25);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.bias = -0.001;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
         scene.add(directionalLight);
         
-        // Create enhanced reticle
+        // Create advanced reticle
         reticle = createReticle();
         scene.add(reticle);
         
@@ -281,7 +461,7 @@
         modelGroup = new THREE.Group();
         scene.add(modelGroup);
         
-        // Load model with proper scaling
+        // Load model with proper scaling and error handling
         const loader = new THREE.GLTFLoader();
         try {
           const gltf = await loader.loadAsync(config.modelUrl);
@@ -299,33 +479,71 @@
           model.scale.set(scaleFactor, scaleFactor, scaleFactor);
           currentScale = scaleFactor;
           
-          model.visible = false; // Start hidden until placed
+          model.visible = false;
           modelGroup.add(model);
           
-          console.log(`Model loaded with initial scale: ${scaleFactor.toFixed(2)}`);
+          if (config.debug) {
+            console.log(`Model loaded with initial scale: ${scaleFactor.toFixed(2)}`);
+            // Add bounding box helper for debugging
+            const bboxHelper = new THREE.Box3Helper(modelBoundingBox, 0xffff00);
+            bboxHelper.visible = false;
+            model.add(bboxHelper);
+          }
         } catch (e) {
           console.error("Failed to load model:", e);
           // Fallback cube with proper scaling
           model = new THREE.Mesh(
             new THREE.BoxGeometry(1, 1, 1),
-            new THREE.MeshStandardMaterial({ color: 0x00ff00 })
+            new THREE.MeshStandardMaterial({ 
+              color: 0x00ff00,
+              roughness: 0.7,
+              metalness: 0.3
+            })
           );
+          model.castShadow = true;
           model.visible = false;
           modelGroup.add(model);
         }
         
-        // Start AR session
-        const session = await navigator.xr.requestSession('immersive-ar');
-        await renderer.xr.setSession(session);
+        // Start AR session with enhanced features
+        const sessionInit = { 
+          requiredFeatures: ['hit-test', 'dom-overlay'],
+          optionalFeatures: ['plane-detection', 'anchors', 'light-estimation', 'depth-sensing']
+        };
         
+        xrSession = await navigator.xr.requestSession('immersive-ar', sessionInit);
+        await renderer.xr.setSession(xrSession);
+        
+        // Set up reference space
+        referenceSpace = await xrSession.requestReferenceSpace('local');
+        
+        // Enable plane detection if supported
+        if (xrSession.enabledFeatures && xrSession.enabledFeatures.includes('plane-detection')) {
+          referenceSpace = await xrSession.requestReferenceSpace('local-floor');
+          const planeDetectionState = { enabled: true };
+          xrSession.updateWorldTrackingState({ planeDetectionState });
+        }
+        
+        // Enable light estimation if supported
+        if (xrSession.enabledFeatures && xrSession.enabledFeatures.includes('light-estimation')) {
+          const lightEstimationState = { enabled: true };
+          xrSession.updateWorldTrackingState({ lightEstimationState });
+        }
+        
+        isSessionStarted = true;
         document.getElementById('loading').style.display = 'none';
         document.getElementById('gesture-help').style.display = 'block';
         document.getElementById('surface-indicator').style.display = 'block';
+        document.getElementById('stability-meter').style.display = 'block';
+        if (config.debug) document.getElementById('debug-info').style.display = 'block';
         
         // Set up controller for placement
         const controller = renderer.xr.getController(0);
         controller.addEventListener('select', placeModel);
         scene.add(controller);
+        
+        // Set up hit test source for surface detection
+        setupHitTestSource();
         
         // Set up gesture controls after model is placed
         setupGestureControls();
@@ -338,7 +556,46 @@
       }
     }
 
-    // Initialize AR.js fallback mode with proper scaling
+    // Set up hit test source for surface detection
+    async function setupHitTestSource() {
+      if (!xrSession || !referenceSpace || hitTestSourceRequested) return;
+      
+      try {
+        const hitTestSource = await xrSession.requestHitTestSource({
+          space: referenceSpace,
+          entityTypes: ['plane', 'mesh'],
+          offsetRay: new XRRay(new DOMPoint(0, 0, 0),
+        });
+        
+        hitTestSourceRequested = true;
+        window.hitTestSource = hitTestSource; // For debugging
+        
+        if (config.debug) {
+          console.log("Hit test source created successfully");
+        }
+      } catch (e) {
+        console.error("Failed to create hit test source:", e);
+        
+        // Fallback to viewer space hit test
+        try {
+          const hitTestSource = await xrSession.requestHitTestSource({
+            space: referenceSpace,
+            entityTypes: ['plane', 'mesh'],
+          });
+          
+          hitTestSourceRequested = true;
+          window.hitTestSource = hitTestSource;
+          
+          if (config.debug) {
+            console.log("Fallback hit test source created successfully");
+          }
+        } catch (e) {
+          console.error("Failed to create fallback hit test source:", e);
+        }
+      }
+    }
+
+    // Initialize AR.js fallback mode with enhanced features
     async function initARJS() {
       try {
         const hasPermission = await checkCameraPermissions();
@@ -350,47 +607,69 @@
         document.getElementById('ar-container').innerHTML = `
           <a-scene 
             vr-mode-ui="enabled: false"
-            arjs="sourceType: webcam; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
-            renderer="logarithmicDepthBuffer: true; precision: medium;"
+            arjs="sourceType: webcam; 
+                  detectionMode: mono_and_matrix; 
+                  matrixCodeType: 3x3;
+                  debugUIEnabled: false;
+                  maxDetectionRate: 30;
+                  cameraParametersUrl: https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/data/camera_para.dat"
+            renderer="logarithmicDepthBuffer: true; precision: high; alpha: true"
             embedded
             cursor="rayOrigin: mouse; fuse: false"
             raycaster="objects: .clickable">
             
             <a-camera gps-camera rotation-reader></a-camera>
             
-            <a-entity geometry="primitive: plane; width: 100; height: 100" 
+            <!-- Enhanced surface detection with multiple planes -->
+            <a-entity id="surface-plane" 
+                     geometry="primitive: plane; width: 100; height: 100" 
                      material="visible: false; shader: flat"
-                     rotation="-90 0 0" class="clickable surface-plane">
+                     rotation="-90 0 0" 
+                     class="clickable">
             </a-entity>
             
-            <a-entity id="model" gltf-model="${config.modelUrl}" 
-                     visible="false">
+            <!-- Model with shadow -->
+            <a-entity id="model" 
+                     gltf-model="${config.modelUrl}" 
+                     visible="false"
+                     shadow="cast: true; receive: true">
             </a-entity>
             
-            <!-- AR.js reticle -->
+            <!-- Enhanced AR.js reticle with stability feedback -->
             <a-entity id="arjs-reticle" visible="false">
-              <a-ring color="white" radius-inner="${config.reticle.ringRadius}" 
+              <a-ring color="white" 
+                     radius-inner="${config.reticle.ringRadius}" 
                      radius-outer="${config.reticle.ringRadius + config.reticle.ringThickness}" 
-                     opacity="${config.reticle.opacity}" rotation="-90 0 0">
+                     opacity="${config.reticle.opacity}" 
+                     rotation="-90 0 0">
               </a-ring>
-              <a-circle color="white" radius="${config.reticle.circleRadius}" 
-                       opacity="${config.reticle.opacity}" rotation="-90 0 0">
+              <a-circle color="white" 
+                       radius="${config.reticle.circleRadius}" 
+                       opacity="${config.reticle.opacity}" 
+                       rotation="-90 0 0">
               </a-circle>
               <a-grid material="wireframe: true; color: white; opacity: ${config.reticle.gridOpacity}" 
-                      width="${config.reticle.gridSize}" height="${config.reticle.gridSize}" 
-                      rotation="-90 0 0">
+                     width="${config.reticle.gridSize}" 
+                     height="${config.reticle.gridSize}" 
+                     rotation="-90 0 0">
               </a-grid>
             </a-entity>
+            
+            <!-- Lighting for better model appearance -->
+            <a-light type="ambient" color="#ffffff" intensity="0.8"></a-light>
+            <a-light type="directional" color="#ffffff" intensity="0.8" position="0.5 1 0.25" cast-shadow></a-light>
           </a-scene>
         `;
         
         arjsScene = document.querySelector('a-scene');
         const modelEl = document.getElementById('model');
         const reticleEl = document.getElementById('arjs-reticle');
+        const surfacePlaneEl = document.getElementById('surface-plane');
         
         arjsScene.addEventListener('loaded', () => {
           document.getElementById('loading').style.display = 'none';
           document.getElementById('gesture-help').style.display = 'block';
+          document.getElementById('stability-meter').style.display = 'block';
           
           // Wait for model to load to apply proper scaling
           modelEl.addEventListener('model-loaded', () => {
@@ -407,24 +686,76 @@
               z: scaleFactor
             });
             
-            console.log(`AR.js model scaled with factor: ${scaleFactor.toFixed(2)}`);
+            if (config.debug) {
+              console.log(`AR.js model scaled with factor: ${scaleFactor.toFixed(2)}`);
+              // Add bounding box helper for debugging
+              const bboxHelper = new THREE.Box3Helper(box, 0xffff00);
+              bboxHelper.visible = false;
+              modelObject.add(bboxHelper);
+            }
           });
+          
+          // Enhanced surface detection with stability tracking
+          let lastIntersectionTime = 0;
+          let lastIntersectionPoint = null;
+          let stabilityScore = 0;
           
           // Place model on surface click
           arjsScene.addEventListener('click', (e) => {
             if (!isModelPlaced && e.detail.intersection && 
-                e.detail.intersection.object.el.classList.contains('surface-plane')) {
-              placeModelARJS(e.detail.intersection.point);
-              reticleEl.setAttribute('visible', 'false');
+                e.detail.intersection.object.el === surfacePlaneEl) {
+              
+              // Only place if stability is high enough
+              if (stabilityScore > 0.7) {
+                placeModelARJS(e.detail.intersection.point);
+                reticleEl.setAttribute('visible', 'false');
+              }
             }
           });
           
           // Show reticle when intersecting with surface
           arjsScene.addEventListener('mouseenter', (e) => {
             if (!isModelPlaced && e.detail.intersection && 
-                e.detail.intersection.object.el.classList.contains('surface-plane')) {
+                e.detail.intersection.object.el === surfacePlaneEl) {
+              
+              const now = Date.now();
+              const intersectionPoint = e.detail.intersection.point;
+              
+              // Calculate stability based on how much the intersection point has moved
+              if (lastIntersectionPoint) {
+                const distanceMoved = lastIntersectionPoint.distanceTo(intersectionPoint);
+                const timeDiff = now - lastIntersectionTime;
+                
+                // Stability increases when movement is small and time difference is small
+                const movementFactor = Math.max(0, 1 - distanceMoved * 10);
+                const timeFactor = Math.min(1, timeDiff / 100);
+                stabilityScore = Math.min(1, stabilityScore * 0.9 + movementFactor * timeFactor * 0.1);
+                
+                // Update stability UI
+                document.getElementById('stability-progress').style.width = `${stabilityScore * 100}%`;
+                
+                // Update reticle color based on stability
+                const color = new THREE.Color().lerpColors(
+                  new THREE.Color(config.reticle.unstableColor),
+                  new THREE.Color(config.reticle.stableColor),
+                  stabilityScore
+                );
+                
+                const colorHex = `#${color.getHexString()}`;
+                reticleEl.setAttribute('color', colorHex);
+                reticleEl.querySelector('a-ring').setAttribute('color', colorHex);
+                reticleEl.querySelector('a-circle').setAttribute('color', colorHex);
+                reticleEl.querySelector('a-grid').setAttribute('color', colorHex);
+              }
+              
+              lastIntersectionPoint = intersectionPoint.clone();
+              lastIntersectionTime = now;
+              
               reticleEl.setAttribute('visible', 'true');
-              reticleEl.setAttribute('position', e.detail.intersection.point);
+              reticleEl.setAttribute('position', intersectionPoint);
+              
+              // Update surface indicator
+              updateARJSSurfaceIndicator(intersectionPoint);
             }
           });
           
@@ -432,6 +763,9 @@
           arjsScene.addEventListener('mouseleave', (e) => {
             if (!isModelPlaced) {
               reticleEl.setAttribute('visible', 'false');
+              document.getElementById('surface-indicator').style.display = 'none';
+              stabilityScore = 0;
+              document.getElementById('stability-progress').style.width = '0%';
             }
           });
           
@@ -441,55 +775,84 @@
       } catch (e) {
         console.error("AR.js initialization failed:", e);
         document.getElementById('support-message').innerHTML = 
-          '<p class="unsupported">Failed to initialize AR</p>';
+          '<p class="unsupported">Failed to initialize AR. Your device may not support AR features.</p>';
       }
     }
 
-    // Place model in WebXR mode
+    // Update surface indicator for AR.js
+    function updateARJSSurfaceIndicator(position) {
+      const indicator = document.getElementById('surface-indicator');
+      if (!indicator) return;
+      
+      // Convert world position to screen coordinates
+      const cameraEl = arjsScene.camera;
+      const camera = cameraEl.object3D;
+      const vector = new THREE.Vector3(
+        position.x,
+        position.y,
+        position.z
+      );
+      
+      vector.project(camera);
+      
+      const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+      const y = -(vector.y * 0.5 - 0.5) * window.innerHeight;
+      
+      indicator.style.left = `${x - 20}px`;
+      indicator.style.top = `${y - 20}px`;
+      indicator.style.display = 'block';
+      
+      // Add pulse animation based on stability
+      const pulseScale = 1 + (0.2 * (1 - stabilityScore));
+      indicator.style.transform = `scale(${pulseScale})`;
+    }
+
+    // Place model in WebXR mode with enhanced anchoring
     async function placeModel() {
-      if (!isModelPlaced && reticle.visible) {
-        // Create an anchor at the reticle position
-        const referenceSpace = renderer.xr.getReferenceSpace();
-        const pose = frame.getViewerPose(referenceSpace);
-        
-        if (pose) {
+      if (!isModelPlaced && reticle.visible && stabilityScore > 0.7) {
+        try {
+          // Create an anchor at the reticle position
           const anchorPose = new XRRigidTransform(
             new DOMPointReadOnly(reticle.position.x, reticle.position.y, reticle.position.z),
-            { x: 0, y: 0, z: 0, w: 1 } // Default orientation
+            { x: 0, y: 0, z: 0, w: 1 }
           );
           
-          try {
-            // Create an anchor at the hit test result's position
-            const anchor = await frame.session.createAnchor(anchorPose, referenceSpace);
-            modelAnchor = anchor;
-            
-            // Position the model group at the anchor's position
-            modelGroup.position.set(0, 0, 0);
-            model.visible = true;
-            isModelPlaced = true;
-            
-            // Add the model group to the anchor's space
-            const anchorGroup = new THREE.Group();
-            anchorGroup.matrix.fromArray(anchor.anchorSpace.getTransformTo(referenceSpace).matrix);
-            anchorGroup.add(modelGroup);
-            scene.add(anchorGroup);
-            
-            // Change reticle color to indicate placement
-            reticle.children.forEach(child => {
-              if (child.material) {
-                child.material.color.setHex(0x00ff00);
-              }
-            });
-            
+          modelAnchor = await xrSession.createAnchor(anchorPose, referenceSpace);
+          
+          // Position the model group at the anchor's position
+          modelGroup.position.set(0, 0, 0);
+          model.visible = true;
+          isModelPlaced = true;
+          
+          // Add the model group to the anchor's space
+          const anchorGroup = new THREE.Group();
+          anchorGroup.matrix.fromArray(modelAnchor.anchorSpace.getTransformTo(referenceSpace).matrix);
+          anchorGroup.add(modelGroup);
+          scene.add(anchorGroup);
+          
+          // Change reticle color to indicate placement
+          updateReticleStability(1.0);
+          
+          // Hide surface indicator
+          document.getElementById('surface-indicator').style.display = 'none';
+          
+          if (config.debug) {
             console.log("Model anchored to real world position");
-          } catch (e) {
-            console.error("Failed to create anchor:", e);
-            // Fallback to non-anchored placement
-            modelGroup.position.setFromMatrixPosition(reticle.matrix);
-            modelGroup.quaternion.setFromRotationMatrix(reticle.matrix);
-            model.visible = true;
-            isModelPlaced = true;
+            // Visualize the anchor point
+            const anchorHelper = new THREE.Mesh(
+              new THREE.SphereGeometry(0.05, 16, 16),
+              new THREE.MeshBasicMaterial({ color: 0xff0000 })
+            );
+            anchorHelper.position.setFromMatrixPosition(anchorGroup.matrix);
+            scene.add(anchorHelper);
           }
+        } catch (e) {
+          console.error("Failed to create anchor:", e);
+          // Fallback to non-anchored placement
+          modelGroup.position.setFromMatrixPosition(reticle.matrix);
+          modelGroup.quaternion.setFromRotationMatrix(reticle.matrix);
+          model.visible = true;
+          isModelPlaced = true;
         }
       }
     }
@@ -500,25 +863,23 @@
       modelEl.setAttribute('visible', 'true');
       modelEl.setAttribute('position', position);
       isModelPlaced = true;
+      
+      // Hide surface indicator
+      document.getElementById('surface-indicator').style.display = 'none';
     }
 
-    // Set up gesture controls for WebXR
+    // Set up advanced gesture controls for WebXR
     function setupGestureControls() {
       const canvas = renderer.domElement;
-      hammerManager = new Hammer.Manager(canvas);
+      hammerManager = new Hammer.Manager(canvas, {
+        recognizers: [
+          [Hammer.Pan, { direction: Hammer.DIRECTION_ALL, threshold: 5 }],
+          [Hammer.Pinch, { threshold: 0.1 }],
+          [Hammer.Rotate, { threshold: 0.1 }]
+        ]
+      });
       
       // Single finger pan to move model
-      const pan = new Hammer.Pan({ threshold: 5 });
-      hammerManager.add(pan);
-      
-      // Two finger pinch to scale model
-      const pinch = new Hammer.Pinch({ threshold: 0.1 });
-      hammerManager.add(pinch);
-      
-      // Two finger rotate to rotate model
-      const rotate = new Hammer.Rotate({ threshold: 0.1 });
-      hammerManager.add(rotate);
-      
       hammerManager.on("panstart", (e) => {
         if (isModelPlaced) {
           lastPosition.copy(modelGroup.position);
@@ -527,32 +888,36 @@
       
       hammerManager.on("pan", (e) => {
         if (isModelPlaced && e.pointers.length === 1) {
-          // Convert screen coordinates to world position
-          const vector = new THREE.Vector3(
+          // Convert screen coordinates to world position using raycasting
+          const vector = new THREE.Vector2(
             (e.center.x / window.innerWidth) * 2 - 1,
-            -(e.center.y / window.innerHeight) * 2 + 1,
-            0.5
+            -(e.center.y / window.innerHeight) * 2 + 1
           );
-          vector.unproject(camera);
           
-          // Calculate position on the ground plane
-          const direction = vector.sub(camera.position).normalize();
-          const distance = -camera.position.y / direction.y;
-          const position = camera.position.clone().add(direction.multiplyScalar(distance));
+          const raycaster = new THREE.Raycaster();
+          raycaster.setFromCamera(vector, camera);
           
-          // Update model position relative to its anchor
-          if (modelAnchor) {
-            const anchorMatrix = new THREE.Matrix4().fromArray(
-              modelAnchor.anchorSpace.getTransformTo(renderer.xr.getReferenceSpace()).matrix
-            );
-            const worldPosition = position.clone().sub(new THREE.Vector3().setFromMatrixPosition(anchorMatrix));
-            modelGroup.position.copy(worldPosition);
-          } else {
-            modelGroup.position.copy(position);
+          // Create a plane at the model's position for intersection
+          const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+          const intersection = new THREE.Vector3();
+          raycaster.ray.intersectPlane(plane, intersection);
+          
+          if (intersection) {
+            // Update model position relative to its anchor
+            if (modelAnchor) {
+              const anchorMatrix = new THREE.Matrix4().fromArray(
+                modelAnchor.anchorSpace.getTransformTo(referenceSpace).matrix
+              );
+              const worldPosition = intersection.clone().sub(new THREE.Vector3().setFromMatrixPosition(anchorMatrix));
+              modelGroup.position.copy(worldPosition);
+            } else {
+              modelGroup.position.copy(intersection);
+            }
           }
         }
       });
       
+      // Two finger pinch to scale model
       hammerManager.on("pinchstart", (e) => {
         if (isModelPlaced) {
           initialScale = currentScale;
@@ -567,6 +932,7 @@
         }
       });
       
+      // Two finger rotate to rotate model
       hammerManager.on("rotatestart", (e) => {
         if (isModelPlaced) {
           initialRotation = modelGroup.rotation.y;
@@ -578,24 +944,23 @@
           modelGroup.rotation.y = initialRotation + e.rotation * (Math.PI / 180);
         }
       });
+      
+      // Add inertia for smoother interaction
+      hammerManager.on("panend", (e) => {
+        // Could add inertia here if desired
+      });
     }
 
     // Set up gesture controls for AR.js
     function setupARJSGestureControls(modelEl) {
       const container = document.getElementById('ar-container');
-      hammerManager = new Hammer.Manager(container);
-      
-      // Single finger pan to move model
-      const pan = new Hammer.Pan({ threshold: 5 });
-      hammerManager.add(pan);
-      
-      // Two finger pinch to scale model
-      const pinch = new Hammer.Pinch({ threshold: 0.1 });
-      hammerManager.add(pinch);
-      
-      // Two finger rotate to rotate model
-      const rotate = new Hammer.Rotate({ threshold: 0.1 });
-      hammerManager.add(rotate);
+      hammerManager = new Hammer.Manager(container, {
+        recognizers: [
+          [Hammer.Pan, { direction: Hammer.DIRECTION_ALL, threshold: 5 }],
+          [Hammer.Pinch, { threshold: 0.1 }],
+          [Hammer.Rotate, { threshold: 0.1 }]
+        ]
+      });
       
       let startPosition = null;
       let startScale = config.initialScale;
@@ -614,13 +979,19 @@
           const movementX = e.deltaX / window.innerWidth * 2;
           const movementY = -e.deltaY / window.innerHeight * 2;
           
+          // Calculate movement in world space
           const movement = new THREE.Vector3(movementX, movementY, 0);
-          movement.applyQuaternion(camera.quaternion);
+          movement.unproject(camera);
+          movement.sub(camera.position).normalize();
+          
+          // Scale movement by distance to model
+          const distance = new THREE.Vector3().copy(startPosition).sub(camera.position).length();
+          const scaledMovement = movement.multiplyScalar(distance * 0.5);
           
           const newPosition = new THREE.Vector3(
-            startPosition.x + movement.x,
-            startPosition.y + movement.y,
-            startPosition.z + movement.z
+            startPosition.x + scaledMovement.x,
+            startPosition.y + scaledMovement.y,
+            startPosition.z + scaledMovement.z
           );
           
           modelEl.setAttribute('position', newPosition);
@@ -663,11 +1034,11 @@
       });
     }
 
-    // WebXR render loop
+    // Enhanced WebXR render loop with stability tracking
     function render(timestamp, frame) {
       if (!frame) return;
       
-      // Store the frame for use in the placeModel function
+      // Store the frame for use in other functions
       window.frame = frame;
       
       // Update reticle pulse animation
@@ -680,29 +1051,68 @@
         reticle.scale.set(reticlePulse, reticlePulse, reticlePulse);
         
         // Get hit test results for surface detection
-        const hitTestResults = frame.getHitTestResultsForInputSource(frame.session.inputSources[0]);
+        const hitTestResults = frame.getHitTestResults(window.hitTestSource);
         
         if (hitTestResults.length > 0) {
           const hit = hitTestResults[0];
-          const pose = hit.getPose(renderer.xr.getReferenceSpace());
+          const pose = hit.getPose(referenceSpace);
           
-          reticle.visible = true;
-          reticle.matrix.fromArray(pose.transform.matrix);
-          
-          // Update surface indicator position
-          const position = new THREE.Vector3();
-          position.setFromMatrixPosition(reticle.matrix);
-          updateSurfaceIndicator(position);
+          if (pose) {
+            reticle.visible = true;
+            reticle.matrix.fromArray(pose.transform.matrix);
+            
+            // Calculate stability based on how much the reticle has moved
+            const currentPosition = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
+            
+            if (lastStablePosition) {
+              const distanceMoved = lastStablePosition.distanceTo(currentPosition);
+              const timeDiff = timestamp - lastStabilityUpdateTime;
+              
+              // Stability increases when movement is small and time difference is small
+              const movementFactor = Math.max(0, 1 - distanceMoved * 10);
+              const timeFactor = Math.min(1, timeDiff / 100);
+              stabilityScore = Math.min(1, stabilityScore * 0.9 + movementFactor * timeFactor * 0.1);
+              
+              // Update reticle appearance based on stability
+              updateReticleStability(stabilityScore);
+            }
+            
+            lastStablePosition = currentPosition.clone();
+            lastStabilityUpdateTime = timestamp;
+            
+            // Update surface indicator position
+            updateSurfaceIndicator(currentPosition);
+            
+            if (config.debug) {
+              // Show debug info
+              const debugInfo = document.getElementById('debug-info');
+              if (debugInfo) {
+                debugInfo.innerHTML = `
+                  Position: ${currentPosition.x.toFixed(2)}, ${currentPosition.y.toFixed(2)}, ${currentPosition.z.toFixed(2)}<br>
+                  Stability: ${(stabilityScore * 100).toFixed(0)}%<br>
+                  FPS: ${Math.round(renderer.info.render.frame / (performance.now() / 1000))}
+                `;
+              }
+            }
+          }
         } else {
           reticle.visible = false;
+          stabilityScore = 0;
+          updateReticleStability(0);
           document.getElementById('surface-indicator').style.display = 'none';
         }
+      }
+      
+      // Request hit test source if not already done
+      hitTestCounter++;
+      if (hitTestCounter % config.tracking.hitTestRefreshRate === 0 && !hitTestSourceRequested) {
+        setupHitTestSource();
       }
       
       renderer.render(scene, camera);
     }
 
-    // Update surface indicator position
+    // Update surface indicator position for WebXR
     function updateSurfaceIndicator(position) {
       const indicator = document.getElementById('surface-indicator');
       if (!indicator) return;
@@ -715,17 +1125,24 @@
       indicator.style.left = `${x - 20}px`;
       indicator.style.top = `${y - 20}px`;
       indicator.style.display = 'block';
+      
+      // Add pulse animation based on stability
+      const pulseScale = 1 + (0.2 * (1 - stabilityScore));
+      indicator.style.transform = `scale(${pulseScale})`;
     }
 
     // Show camera error message
     function showCameraError() {
       document.getElementById('loading').style.display = 'none';
       document.getElementById('support-message').innerHTML = 
-        '<p class="unsupported">Camera access was denied. Please enable camera permissions.</p>';
+        '<p class="unsupported">Camera access was denied. Please enable camera permissions in your browser settings.</p>';
     }
 
     // Fallback to AR.js
     function fallbackToARJS() {
+      console.log("Falling back to AR.js");
+      document.getElementById('support-message').innerHTML = 
+        '<p>Using fallback AR mode. For best experience, use a WebXR compatible device.</p>';
       initARJS();
     }
 
@@ -755,6 +1172,14 @@
     // Initialize on load
     window.addEventListener('load', () => {
       window.addEventListener('resize', onWindowResize);
+      
+      // Check for WebXR support immediately to show appropriate UI
+      checkXRSupport().then(supported => {
+        if (!supported) {
+          document.getElementById('support-message').innerHTML = 
+            '<p>For the best experience, use a device with WebXR support (iOS 15+ or Android with Chrome 81+).</p>';
+        }
+      });
     });
   </script>
 </body>
