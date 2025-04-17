@@ -179,7 +179,9 @@
         stabilizationFrames: 30,
         minFeaturePoints: 30,
         hitTestRefreshRate: 10,
-        environmentEstimation: true
+        environmentEstimation: true,
+        planeOpacity: 0.5, // Adjust plane opacity
+        planeColor: 0xffffff // White planes
       },
       reticle: {
         ringRadius: 0.15,
@@ -232,6 +234,10 @@
     let referenceSpace = null;
     let lastHitTestPose = null;
     let lastStabilityUpdateTime = 0;
+    let planeMeshes = [];
+    let detectedPlanes = new Set();
+    let featurePoints = [];
+    let featurePointCloud = null;
 
     // Enhanced WebXR support check
   async function checkXRSupport() {
@@ -645,29 +651,48 @@ reticleGroup.userData = {
         fallbackToARJS();
       }
     }
-   async function initWebXR() {
-  try {
-    const hasPermission = await checkCameraPermissions();
-    if (!hasPermission) {
-      showCameraError();
-      return;
+  async function initWebXR() {
+      try {
+        const hasPermission = await checkCameraPermissions();
+        if (!hasPermission) {
+          showCameraError();
+          return;
+        }
+
+        // Scene setup remains the same until after renderer creation
+        
+        // Add feature point visualization
+        const pointGeometry = new THREE.BufferGeometry();
+        const pointMaterial = new THREE.PointsMaterial({
+          color: 0xffffff,
+          size: 0.02,
+          transparent: true,
+          opacity: 0.8
+        });
+        featurePointCloud = new THREE.Points(pointGeometry, pointMaterial);
+        featurePointCloud.visible = config.debug; // Only show in debug mode
+        scene.add(featurePointCloud);
+
+        // Rest of your WebXR initialization until session creation
+        
+        xrSession = await navigator.xr.requestSession('immersive-ar', {
+          requiredFeatures: ['hit-test', 'dom-overlay'],
+          optionalFeatures: ['plane-detection', 'anchors', 'light-estimation', 'depth-sensing']
+        });
+        
+        // Add plane detection callback
+        xrSession.addEventListener('planesdetected', updatePlaneDetection);
+        
+        // Rest of your WebXR initialization
+      } catch (e) {
+        console.error("WebXR initialization failed:", e);
+        fallbackToARJS();
+      }
     }
 
-    // Rest of your WebXR initialization code...
-  } catch (e) {
-    console.error("WebXR initialization failed:", e);
-    // Show appropriate error message
-    if (e.name === 'NotSupportedError') {
-      document.getElementById('support-message').innerHTML = 
-        '<p class="unsupported">WebXR is not supported on this device.</p>';
-    } else if (e.name === 'SecurityError') {
-      document.getElementById('support-message').innerHTML = 
-        '<p class="unsupported">Camera access was blocked. Please check permissions.</p>';
-    } else {
-      fallbackToARJS();
-    }
-  }
-}
+    // New function to handle plane detection updates
+    function updatePlaneDetection(event) {
+      if (!event.detectedPlanes) return;
 
     // Set up hit test source for surface detection
    // Replace the existing setupHitTestSource function with this improved version
@@ -847,45 +872,166 @@ async function initWebXR() {
     requiredStableFrames: 10
   }
 };
-async function initARJS() {
-  try {
-    // First ensure we have camera permissions
-    const hasPermission = await checkCameraPermissions();
-    if (!hasPermission) {
-      showCameraError();
-      return;
+ for (const plane of event.detectedPlanes) {
+        if (!detectedPlanes.has(plane.uuid)) {
+          createPlaneMesh(plane);
+          detectedPlanes.add(plane.uuid);
+        } else {
+          updatePlaneMesh(plane);
+        }
+      }
+      
+      // Update feature points if available
+      if (event.detectedFeaturePoints && config.debug) {
+        updateFeaturePoints(event.detectedFeaturePoints);
+      }
     }
 
-    // Android-specific AR.js configuration
-    const isAndroid = /android/i.test(navigator.userAgent);
-    const arjsConfig = {
-      sourceType: 'webcam',
-      detectionMode: isAndroid ? 'mono_and_matrix' : 'mono',
-      matrixCodeType: isAndroid ? '3x3' : '4x4',
-      cameraParametersUrl: isAndroid ? 
-        'https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/data/camera_para.dat' :
-        'https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/data/camera_para-iPhone.dat',
-      maxDetectionRate: 30,
-      canvasWidth: window.innerWidth,
-      canvasHeight: window.innerHeight
-    };
+    // Create a mesh for a detected plane
+    function createPlaneMesh(plane) {
+      const planeGeometry = new THREE.PlaneGeometry(1, 1);
+      const planeMaterial = new THREE.MeshBasicMaterial({
+        color: config.tracking.planeColor,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: config.tracking.planeOpacity,
+        wireframe: false
+      });
+      
+      const planeMesh = new THREE.Mesh(planeGeometry, planeMaterial);
+      planeMesh.matrixAutoUpdate = false;
+      planeMesh.userData.plane = plane;
+      
+      // Align with the plane's orientation
+      planeMesh.rotation.x = -Math.PI / 2;
+      
+      scene.add(planeMesh);
+      planeMeshes.push(planeMesh);
+      
+      if (config.debug) {
+        console.log(`New plane detected: ${plane.uuid}`);
+      }
+    }
 
-    document.getElementById('ar-container').innerHTML = `
-      <a-scene 
-        vr-mode-ui="enabled: false"
-        arjs="${Object.entries(arjsConfig).map(([k,v]) => `${k}: ${v}`).join('; ')}"
-        renderer="logarithmicDepthBuffer: true; precision: high; alpha: true"
-        embedded>
-        <!-- Rest of your AR.js scene setup -->
-      </a-scene>
-    `;
-    
-    // Rest of your AR.js initialization...
-  } catch (e) {
-    console.error("AR.js initialization failed:", e);
-    showUnsupportedMessage();
-  }
-}
+    // Update an existing plane mesh
+    function updatePlaneMesh(plane) {
+      const planeMesh = planeMeshes.find(mesh => mesh.userData.plane.uuid === plane.uuid);
+      if (!planeMesh) return;
+      
+      // Update geometry based on plane's extent
+      const width = plane.extent?.width || 1;
+      const height = plane.extent?.height || 1;
+      
+      planeMesh.geometry.dispose();
+      planeMesh.geometry = new THREE.PlaneGeometry(width, height);
+      
+      // Update position and orientation
+      planeMesh.matrix.fromArray(plane.pose.transform.matrix);
+      planeMesh.matrix.decompose(planeMesh.position, planeMesh.quaternion, planeMesh.scale);
+      
+      if (config.debug) {
+        planeMesh.material.wireframe = true;
+      }
+    }
+
+    // Update feature point visualization
+    function updateFeaturePoints(points) {
+      const positions = new Float32Array(points.length * 3);
+      
+      for (let i = 0; i < points.length; i++) {
+        positions[i * 3] = points[i].x;
+        positions[i * 3 + 1] = points[i].y;
+        positions[i * 3 + 2] = points[i].z;
+      }
+      
+      featurePointCloud.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      featurePointCloud.geometry.attributes.position.needsUpdate = true;
+    }
+
+    // Updated render function to include plane visualization
+    function render(timestamp, frame) {
+      if (!frame) return;
+      
+      // Process detected planes if available
+      if (frame.detectedPlanes) {
+        for (const plane of frame.detectedPlanes) {
+          const planeMesh = planeMeshes.find(m => m.userData.plane.uuid === plane.uuid);
+          if (planeMesh) {
+            planeMesh.matrix.fromArray(plane.pose.transform.matrix);
+            planeMesh.visible = true;
+            
+            // Update plane extent if changed
+            if (plane.extent) {
+              planeMesh.geometry.dispose();
+              planeMesh.geometry = new THREE.PlaneGeometry(plane.extent.width, plane.extent.height);
+            }
+          }
+        }
+      }
+      
+      // Process feature points if available
+      if (frame.detectedFeaturePoints && config.debug) {
+        const points = frame.detectedFeaturePoints.points;
+        const positions = new Float32Array(points.length * 3);
+        
+        for (let i = 0; i < points.length; i++) {
+          positions[i * 3] = points[i].x;
+          positions[i * 3 + 1] = points[i].y;
+          positions[i * 3 + 2] = points[i].z;
+        }
+        
+        featurePointCloud.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        featurePointCloud.geometry.attributes.position.needsUpdate = true;
+        featurePointCloud.visible = true;
+      }
+      
+      // Rest of your render function remains the same
+    }
+
+    // Updated AR.js initialization for better plane detection
+    async function initARJS() {
+      try {
+        const hasPermission = await checkCameraPermissions();
+        if (!hasPermission) {
+          showCameraError();
+          return;
+        }
+
+        document.getElementById('ar-container').innerHTML = `
+          <a-scene 
+            vr-mode-ui="enabled: false"
+            arjs="sourceType: webcam; 
+                  detectionMode: mono_and_matrix; 
+                  matrixCodeType: 3x3;
+                  debugUIEnabled: ${config.debug};
+                  maxDetectionRate: 60;
+                  cameraParametersUrl: https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/data/camera_para.dat"
+            renderer="logarithmicDepthBuffer: true; precision: high; alpha: true"
+            embedded
+            cursor="rayOrigin: mouse; fuse: false"
+            raycaster="objects: .clickable">
+            
+            <a-camera gps-camera rotation-reader></a-camera>
+            
+            <!-- Enhanced plane detection with white mesh -->
+            <a-entity id="ar-planes" 
+                     geometry="primitive: plane; width: 100; height: 100" 
+                     material="color: white; opacity: ${config.tracking.planeOpacity}; shader: flat; side: double"
+                     rotation="-90 0 0" 
+                     class="clickable">
+            </a-entity>
+            
+            <!-- Rest of your AR.js scene setup -->
+          </a-scene>
+        `;
+        
+        // Rest of your AR.js initialization
+      } catch (e) {
+        console.error("AR.js initialization failed:", e);
+        document.getElementById('support-message').innerHTML = 
+          '<p class="unsupported">Failed to initialize AR. Your device may not support AR features.</p>';
+      }
+    }
     function setupAndroidSpecificUI() {
   const isAndroid = /android/i.test(navigator.userAgent);
   if (isAndroid) {
