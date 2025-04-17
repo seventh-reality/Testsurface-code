@@ -283,29 +283,53 @@ async function checkARCoreSupport() {
 }
 
     // Check camera permissions with enhanced error handling
-    async function checkCameraPermissions() {
+   async function checkCameraPermissions() {
+  try {
+    // First check if permissions API is available
+    if (navigator.permissions && navigator.permissions.query) {
       try {
-        if (navigator.permissions) {
-          const permissionStatus = await navigator.permissions.query({ name: 'camera' });
-          if (permissionStatus.state === 'denied') {
-            return false;
-          }
+        const permissionStatus = await navigator.permissions.query({ name: 'camera' });
+        if (permissionStatus.state === 'denied') {
+          return false;
         }
-        
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { 
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
-          } 
-        });
-        stream.getTracks().forEach(track => track.stop());
-        return true;
       } catch (e) {
-        console.error("Camera permission error:", e);
+        console.log("Permissions API not fully supported, proceeding...");
+      }
+    }
+
+    // Android-specific device orientation permission (required for some AR features)
+    const isAndroid = /android/i.test(navigator.userAgent);
+    if (isAndroid && typeof DeviceOrientationEvent !== 'undefined' && 
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        const permission = await DeviceOrientationEvent.requestPermission();
+        if (permission !== 'granted') {
+          console.log("Device orientation permission denied");
+          return false;
+        }
+      } catch (e) {
+        console.error("Device orientation permission error:", e);
         return false;
       }
     }
+
+    // Test camera access with getUserMedia
+    const stream = await navigator.mediaDevices.getUserMedia({ 
+      video: { 
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    });
+    
+    // Immediately stop tracks to release camera
+    stream.getTracks().forEach(track => track.stop());
+    return true;
+  } catch (e) {
+    console.error("Camera permission error:", e);
+    return false;
+  }
+}
 
     // Create advanced reticle with stability feedback
     function createReticle() {
@@ -603,6 +627,29 @@ reticleGroup.userData = {
         fallbackToARJS();
       }
     }
+    async function initWebXR() {
+  try {
+    const hasPermission = await checkCameraPermissions();
+    if (!hasPermission) {
+      showCameraError();
+      return;
+    }
+
+    // Rest of your WebXR initialization code...
+  } catch (e) {
+    console.error("WebXR initialization failed:", e);
+    // Show appropriate error message
+    if (e.name === 'NotSupportedError') {
+      document.getElementById('support-message').innerHTML = 
+        '<p class="unsupported">WebXR is not supported on this device.</p>';
+    } else if (e.name === 'SecurityError') {
+      document.getElementById('support-message').innerHTML = 
+        '<p class="unsupported">Camera access was blocked. Please check permissions.</p>';
+    } else {
+      fallbackToARJS();
+    }
+  }
+}
 
     // Set up hit test source for surface detection
    // Replace the existing setupHitTestSource function with this improved version
@@ -782,40 +829,15 @@ async function initWebXR() {
     requiredStableFrames: 10
   }
 };
-    async function initARJS() {
+async function initARJS() {
   try {
     // First ensure we have camera permissions
-   async function checkCameraPermissions() {
-  try {
-    // Android-specific permission check
-    if (typeof DeviceOrientationEvent !== 'undefined' && 
-        typeof DeviceOrientationEvent.requestPermission === 'function') {
-      try {
-        const permission = await DeviceOrientationEvent.requestPermission();
-        if (permission !== 'granted') return false;
-      } catch (e) {
-        console.error("Device orientation permission error:", e);
-        return false;
-      }
+    const hasPermission = await checkCameraPermissions();
+    if (!hasPermission) {
+      showCameraError();
+      return;
     }
 
-    // Standard camera permission check
-    const stream = await navigator.mediaDevices.getUserMedia({ 
-      video: { 
-        facingMode: { ideal: 'environment' },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      } 
-    });
-    
-    // Stop all tracks
-    stream.getTracks().forEach(track => track.stop());
-    return true;
-  } catch (e) {
-    console.error("Camera permission error:", e);
-    return false;
-  }
-}
     // Android-specific AR.js configuration
     const isAndroid = /android/i.test(navigator.userAgent);
     const arjsConfig = {
@@ -1425,11 +1447,27 @@ async function initWebXR() {
     }
 
     // Show camera error message
-    function showCameraError() {
-      document.getElementById('loading').style.display = 'none';
-      document.getElementById('support-message').innerHTML = 
-        '<p class="unsupported">Camera access was denied. Please enable camera permissions in your browser settings.</p>';
+   function showCameraError() {
+  const supportMessage = document.getElementById('support-message');
+  supportMessage.innerHTML = `
+    <div class="unsupported">
+      <p>Camera access is required for AR features.</p>
+      <p>Please enable camera permissions in your browser settings.</p>
+      ${/android/i.test(navigator.userAgent) ? 
+        '<p>On Android: Tap the camera icon in the address bar and select "Allow".</p>' : ''}
+      <button id="retry-button" style="margin-top: 15px;">Retry</button>
+    </div>
+  `;
+  
+  document.getElementById('retry-button').addEventListener('click', async () => {
+    const supported = await checkXRSupport();
+    if (supported) {
+      initWebXR();
+    } else {
+      fallbackToARJS();
     }
+  });
+}
 
     // Fallback to AR.js
     function fallbackToARJS() {
@@ -1451,16 +1489,35 @@ async function initWebXR() {
     }
 
     // Start button event listener
-    document.getElementById('start-button').addEventListener('click', async () => {
-      const supported = await checkXRSupport();
-      document.getElementById('start-button').disabled = true;
-      
-      if (supported) {
-        initWebXR();
-      } else {
-        fallbackToARJS();
-      }
-    });
+   document.getElementById('start-button').addEventListener('click', async () => {
+  const startButton = document.getElementById('start-button');
+  startButton.disabled = true;
+  startButton.textContent = 'Initializing...';
+  
+  try {
+    const hasPermission = await checkCameraPermissions();
+    if (!hasPermission) {
+      showCameraError();
+      startButton.disabled = false;
+      startButton.textContent = 'Start AR Experience';
+      return;
+    }
+    
+    const supported = await checkXRSupport();
+    if (supported) {
+      await initWebXR();
+    } else {
+      await initARJS();
+    }
+  } catch (e) {
+    console.error("Failed to start AR experience:", e);
+    document.getElementById('support-message').innerHTML = `
+      <p class="unsupported">Failed to initialize AR: ${e.message}</p>
+    `;
+    startButton.disabled = false;
+    startButton.textContent = 'Try Again';
+  }
+});
 
    // Initialize on load
 window.addEventListener('DOMContentLoaded', () => {
