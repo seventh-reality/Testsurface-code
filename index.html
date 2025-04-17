@@ -735,13 +735,27 @@ function updateSurfaceIndicator(position) {
     indicator.style.display = 'none';
   }
 }
-// Add this to your initWebXR function after creating the session:
-xrSession.addEventListener('inputsourceschange', (event) => {
-  // Re-request hit test source if we lost it
-  if (!hitTestSource && hitTestSourceRequested) {
-    setupHitTestSource();
+async function initWebXR() {
+  // ... previous session creation code ...
+  
+  try {
+    xrSession = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test']
+    });
+    
+    // Only add event listener after session is created
+    xrSession.addEventListener('inputsourceschange', (event) => {
+      // Re-request hit test source if we lost it
+      if (!hitTestSource && hitTestSourceRequested) {
+        setupHitTestSource();
+      }
+    });
+    
+    // ... rest of your initialization code ...
+  } catch (error) {
+    console.error('Error starting AR session:', error);
   }
-});
+}
     // Add this to your config:
     const tracking = {
   // ... existing config ...
