@@ -234,36 +234,53 @@
     let lastStabilityUpdateTime = 0;
 
     // Enhanced WebXR support check
-    async function checkXRSupport() {
-      if (!navigator.xr) {
-        if (window.WebXRPolyfill) {
-          new WebXRPolyfill();
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-        if (!navigator.xr) return false;
-      }
-      
-      try {
-        const supported = await navigator.xr.isSessionSupported('immersive-ar');
-        if (supported) {
-          return true;
-        } else {
-          // Check for ARCore/ARKit support through user agent
-          const userAgent = navigator.userAgent || navigator.vendor || window.opera;
-          const isAndroid = /android/i.test(userAgent);
-          const isIOS = /iPad|iPhone|iPod/.test(userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-          
-          if ((isAndroid && !userAgent.includes('Chrome/')) || 
-              (isIOS && !window.WebKitPlaybackTargetAvailabilityEvent)) {
-            return false;
-          }
-          return false;
-        }
-      } catch (e) {
-        console.error("XR support check failed:", e);
-        return false;
-      }
+   async function checkXRSupport() {
+  // First check if WebXR is supported at all
+  if (!('xr' in navigator)) {
+    return false;
+  }
+
+  // Check for immersive-ar support
+  try {
+    const supported = await navigator.xr.isSessionSupported('immersive-ar');
+    if (supported) return true;
+  } catch (e) {
+    console.error("WebXR support check error:", e);
+  }
+
+  // Check for ARCore support (Android specific)
+  const isAndroid = /android/i.test(navigator.userAgent);
+  if (isAndroid) {
+    try {
+      // Additional check for ARCore support
+      const arCoreSupported = await checkARCoreSupport();
+      return arCoreSupported;
+    } catch (e) {
+      console.error("ARCore check failed:", e);
     }
+  }
+
+  return false;
+}
+
+async function checkARCoreSupport() {
+  // This is a more Android-specific check
+  return new Promise((resolve) => {
+    if (window.ARCore) {
+      ARCore.getARAvailability().then((availability) => {
+        resolve(availability === 'SUPPORTED_INSTALLED');
+      }).catch(() => resolve(false));
+    } else {
+      // Fallback check for Chrome's WebXR AR support
+      const isChrome = /chrome|chromium|crios/i.test(navigator.userAgent);
+      const chromeVersionMatch = navigator.userAgent.match(/Chrome\/(\d+)/);
+      const chromeVersion = chromeVersionMatch ? parseInt(chromeVersionMatch[1]) : 0;
+      
+      // Chrome 81+ supports WebXR on Android with ARCore
+      resolve(isChrome && chromeVersion >= 81);
+    }
+  });
+}
 
     // Check camera permissions with enhanced error handling
     async function checkCameraPermissions() {
@@ -765,6 +782,124 @@ async function initWebXR() {
     requiredStableFrames: 10
   }
 };
+    async function initARJS() {
+  try {
+    // First ensure we have camera permissions
+   async function checkCameraPermissions() {
+  try {
+    // Android-specific permission check
+    if (typeof DeviceOrientationEvent !== 'undefined' && 
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        const permission = await DeviceOrientationEvent.requestPermission();
+        if (permission !== 'granted') return false;
+      } catch (e) {
+        console.error("Device orientation permission error:", e);
+        return false;
+      }
+    }
+
+    // Standard camera permission check
+    const stream = await navigator.mediaDevices.getUserMedia({ 
+      video: { 
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      } 
+    });
+    
+    // Stop all tracks
+    stream.getTracks().forEach(track => track.stop());
+    return true;
+  } catch (e) {
+    console.error("Camera permission error:", e);
+    return false;
+  }
+}
+    // Android-specific AR.js configuration
+    const isAndroid = /android/i.test(navigator.userAgent);
+    const arjsConfig = {
+      sourceType: 'webcam',
+      detectionMode: isAndroid ? 'mono_and_matrix' : 'mono',
+      matrixCodeType: isAndroid ? '3x3' : '4x4',
+      cameraParametersUrl: isAndroid ? 
+        'https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/data/camera_para.dat' :
+        'https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/data/camera_para-iPhone.dat',
+      maxDetectionRate: 30,
+      canvasWidth: window.innerWidth,
+      canvasHeight: window.innerHeight
+    };
+
+    document.getElementById('ar-container').innerHTML = `
+      <a-scene 
+        vr-mode-ui="enabled: false"
+        arjs="${Object.entries(arjsConfig).map(([k,v]) => `${k}: ${v}`).join('; ')}"
+        renderer="logarithmicDepthBuffer: true; precision: high; alpha: true"
+        embedded>
+        <!-- Rest of your AR.js scene setup -->
+      </a-scene>
+    `;
+    
+    // Rest of your AR.js initialization...
+  } catch (e) {
+    console.error("AR.js initialization failed:", e);
+    showUnsupportedMessage();
+  }
+}
+    function setupAndroidSpecificUI() {
+  const isAndroid = /android/i.test(navigator.userAgent);
+  if (isAndroid) {
+    // Adjust UI elements for Android
+    document.getElementById('info').style.fontSize = '16px';
+    document.getElementById('gesture-help').style.bottom = '80px';
+    
+    // Add Android-specific instructions
+    const androidHelp = document.createElement('div');
+    androidHelp.id = 'android-help';
+    androidHelp.style.position = 'fixed';
+    androidHelp.style.bottom = '120px';
+    androidHelp.style.left = '0';
+    androidHelp.style.right = '0';
+    androidHelp.style.textAlign = 'center';
+    androidHelp.style.color = 'white';
+    androidHelp.style.backgroundColor = 'rgba(0,0,0,0.7)';
+    androidHelp.style.padding = '10px';
+    androidHelp.style.borderRadius = '5px';
+    androidHelp.innerHTML = 'On Android: Move device slowly to detect surfaces';
+    document.body.appendChild(androidHelp);
+  }
+}
+    function logError(error) {
+  console.error(error);
+  if (config.debug) {
+    const errorDisplay = document.getElementById('error-display') || 
+      document.createElement('div');
+    errorDisplay.id = 'error-display';
+    errorDisplay.style.position = 'fixed';
+    errorDisplay.style.top = '0';
+    errorDisplay.style.left = '0';
+    errorDisplay.style.color = 'red';
+    errorDisplay.style.backgroundColor = 'rgba(0,0,0,0.7)';
+    errorDisplay.style.padding = '10px';
+    errorDisplay.style.zIndex = '1000';
+    errorDisplay.textContent = `Error: ${error.message || error}`;
+    document.body.appendChild(errorDisplay);
+  }
+}
+    async function startARExperience() {
+  try {
+    // First try WebXR
+    await initWebXR();
+  } catch (e) {
+    console.log("WebXR failed, trying AR.js");
+    try {
+      await initARJS();
+    } catch (e2) {
+      console.log("AR.js failed, showing fallback");
+      showUnsupportedMessage();
+    }
+  }
+}
 
     // Initialize AR.js fallback mode with enhanced features
     async function initARJS() {
