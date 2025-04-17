@@ -234,7 +234,7 @@
     let lastStabilityUpdateTime = 0;
 
     // Enhanced WebXR support check
-   async function checkXRSupport() {
+  async function checkXRSupport() {
   // First check if WebXR is supported at all
   if (!('xr' in navigator)) {
     return false;
@@ -248,11 +248,11 @@
     console.error("WebXR support check error:", e);
   }
 
-  // Check for ARCore support (Android specific)
+  // Android-specific checks
   const isAndroid = /android/i.test(navigator.userAgent);
   if (isAndroid) {
     try {
-      // Additional check for ARCore support
+      // Check if ARCore is supported and installed
       const arCoreSupported = await checkARCoreSupport();
       return arCoreSupported;
     } catch (e) {
@@ -261,6 +261,24 @@
   }
 
   return false;
+}
+
+async function checkARCoreSupport() {
+  return new Promise((resolve) => {
+    if (window.ARCore) {
+      ARCore.getARAvailability().then((availability) => {
+        resolve(availability === 'SUPPORTED_INSTALLED');
+      }).catch(() => resolve(false));
+    } else {
+      // Fallback check for Chrome's WebXR AR support
+      const isChrome = /chrome|chromium|crios/i.test(navigator.userAgent);
+      const chromeVersionMatch = navigator.userAgent.match(/Chrome\/(\d+)/);
+      const chromeVersion = chromeVersionMatch ? parseInt(chromeVersionMatch[1]) : 0;
+      
+      // Chrome 81+ supports WebXR on Android with ARCore
+      resolve(isChrome && chromeVersion >= 81);
+    }
+  });
 }
 
 async function checkARCoreSupport() {
@@ -283,7 +301,7 @@ async function checkARCoreSupport() {
 }
 
     // Check camera permissions with enhanced error handling
-   async function checkCameraPermissions() {
+  async function checkCameraPermissions() {
   try {
     // First check if permissions API is available
     if (navigator.permissions && navigator.permissions.query) {
@@ -297,7 +315,7 @@ async function checkARCoreSupport() {
       }
     }
 
-    // Android-specific device orientation permission (required for some AR features)
+    // Android-specific device orientation permission
     const isAndroid = /android/i.test(navigator.userAgent);
     if (isAndroid && typeof DeviceOrientationEvent !== 'undefined' && 
         typeof DeviceOrientationEvent.requestPermission === 'function') {
@@ -627,7 +645,7 @@ reticleGroup.userData = {
         fallbackToARJS();
       }
     }
-    async function initWebXR() {
+   async function initWebXR() {
   try {
     const hasPermission = await checkCameraPermissions();
     if (!hasPermission) {
@@ -1489,7 +1507,7 @@ async function initARJS() {
     }
 
     // Start button event listener
-   document.getElementById('start-button').addEventListener('click', async () => {
+  document.getElementById('start-button').addEventListener('click', async () => {
   const startButton = document.getElementById('start-button');
   startButton.disabled = true;
   startButton.textContent = 'Initializing...';
