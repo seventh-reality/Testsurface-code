@@ -9,8 +9,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <!-- A-Frame -->
     <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe-master.min.js"></script>
-    <!-- AR.js with Image Tracking -->
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
+    <!-- WebAR.rocks for SLAM -->
+    <script src="https://cdn.jsdelivr.net/gh/WebAR-rocks/webar.rocks.three@latest/dist/webar.rocks.three.min.js"></script>
     <style>
         body {
             margin: 0;
@@ -70,6 +70,20 @@
             width: 100%;
             height: 100%;
         }
+        #webar-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            display: none;
+        }
+        #webar-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
     </style>
 </head>
 <body>
@@ -82,6 +96,15 @@
         <h2 id="error-title">AR Not Available</h2>
         <div id="error-message"></div>
         <button id="start-button">Try Again</button>
+    </div>
+
+    <!-- WebAR.rocks SLAM container -->
+    <div id="webar-container">
+        <canvas id="webar-canvas"></canvas>
+        <div id="webar-surface-marker" style="display: none; position: absolute; width: 40px; height: 40px; border: 2px solid cyan; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none;"></div>
+        <div id="webar-placement-ui" style="display: none; position: absolute; bottom: 20px; width: 100%; text-align: center; color: white; font-size: 18px; text-shadow: 0 0 5px black;">
+            Point at a flat surface and tap to place
+        </div>
     </div>
 
     <!-- WebXR version (hidden by default) -->
@@ -136,6 +159,12 @@
             const errorMessage = document.getElementById('error-message');
             const startButton = document.getElementById('start-button');
             
+            // WebAR.rocks elements
+            const webarContainer = document.getElementById('webar-container');
+            const webarCanvas = document.getElementById('webar-canvas');
+            const webarSurfaceMarker = document.getElementById('webar-surface-marker');
+            const webarPlacementUI = document.getElementById('webar-placement-ui');
+            
             // WebXR elements
             const webxrScene = document.getElementById('webxr-scene');
             const webxrContent = document.getElementById('webxr-content');
@@ -151,6 +180,12 @@
             let currentMode = null;
             let hitTestSource = null;
             let lastHitPosition = null;
+            let webarSlam = null;
+            let webarScene = null;
+            let webarCamera = null;
+            let webarRenderer = null;
+            let webarContent = null;
+            let webarHitTestPosition = null;
             
             // Show error message
             function showError(title, message) {
@@ -180,12 +215,113 @@
                     }
                 }
                 
+                // Then check for WebAR.rocks SLAM support
+                if (WEBARROCKS_THREE.isWebARCameraAvailable()) {
+                    return 'webar';
+                }
+                
                 // Then check for AR.js compatibility (older devices)
                 if (AFRAME.utils.device.checkWebAR()) {
                     return 'arjs';
                 }
                 
                 return null;
+            }
+            
+            // Initialize WebAR.rocks SLAM
+            async function initWebAR() {
+                try {
+                    // Initialize WebAR.rocks
+                    webarContainer.style.display = 'block';
+                    
+                    // Create Three.js scene
+                    webarScene = new THREE.Scene();
+                    webarCamera = new THREE.PerspectiveCamera();
+                    webarRenderer = new THREE.WebGLRenderer({
+                        canvas: webarCanvas,
+                        antialias: true,
+                        alpha: true
+                    });
+                    webarRenderer.setPixelRatio(window.devicePixelRatio);
+                    webarRenderer.setSize(window.innerWidth, window.innerHeight);
+                    
+                    // Create content container
+                    webarContent = new THREE.Group();
+                    webarScene.add(webarContent);
+                    
+                    // Add lighting
+                    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+                    webarScene.add(ambientLight);
+                    
+                    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                    directionalLight.position.set(-1, 2, 1);
+                    webarScene.add(directionalLight);
+                    
+                    // Initialize SLAM
+                    webarSlam = new WEBARROCKS_THREE.WebARCamera({
+                        renderer: webarRenderer,
+                        scene: webarScene,
+                        camera: webarCamera,
+                        videoElement: webarCanvas,
+                        poseMode: 'slam',
+                        onReady: () => {
+                            console.log('WebAR.rocks SLAM is ready');
+                            loader.style.display = 'none';
+                            webarPlacementUI.style.display = 'block';
+                        },
+                        onError: (error) => {
+                            console.error('WebAR.rocks error:', error);
+                            showError("SLAM Error", "Failed to initialize SLAM tracking. Please try again in a well-lit environment.");
+                        },
+                        onResize: (width, height) => {
+                            webarRenderer.setSize(width, height);
+                        }
+                    });
+                    
+                    // Start render loop
+                    function animate() {
+                        requestAnimationFrame(animate);
+                        
+                        if (webarSlam && webarSlam.isReady) {
+                            // Update SLAM
+                            webarSlam.update();
+                            
+                            // Perform hit test for surface detection
+                            if (webarSlam.get('poseReady')) {
+                                const hitTestResult = webarSlam.hitTest(0.5, 0.5); // Center of screen
+                                
+                                if (hitTestResult && hitTestResult.length > 0) {
+                                    const hit = hitTestResult[0];
+                                    webarHitTestPosition = hit.position;
+                                    
+                                    // Update surface marker
+                                    const screenPos = webarSlam.project(hit.position);
+                                    webarSurfaceMarker.style.display = 'block';
+                                    webarSurfaceMarker.style.left = `${screenPos.x * 100}%`;
+                                    webarSurfaceMarker.style.top = `${screenPos.y * 100}%`;
+                                } else {
+                                    webarSurfaceMarker.style.display = 'none';
+                                }
+                            }
+                            
+                            webarRenderer.render(webarScene, webarCamera);
+                        }
+                    }
+                    
+                    animate();
+                    
+                    // Handle window resize
+                    window.addEventListener('resize', () => {
+                        if (webarSlam) {
+                            webarSlam.resize();
+                        }
+                    });
+                    
+                    return true;
+                } catch (error) {
+                    console.error('WebAR.rocks initialization failed:', error);
+                    return false;
+                }
             }
             
             // Initialize WebXR AR
@@ -295,30 +431,65 @@
             
             // Place AR content
             function placeContent(position, mode) {
-                const content = mode === 'webxr' ? webxrContent : arjsContent;
-                const placementUI = mode === 'webxr' ? webxrPlacementUI : arjsPlacementUI;
-                
-                // Create a simple 3D model (you can replace with your own model)
-                const model = document.createElement('a-entity');
-                model.setAttribute('geometry', 'primitive: box; width: 0.2; height: 0.2; depth: 0.2');
-                model.setAttribute('material', 'color: #4CC3D9');
-                model.setAttribute('position', position);
-                model.setAttribute('animation', {
-                    property: 'rotation',
-                    to: '0 360 0',
-                    loop: true,
-                    dur: 10000
-                });
-                
-                content.appendChild(model);
-                
-                if (mode === 'webxr') {
+                if (mode === 'webar') {
+                    // Create a simple 3D model for WebAR.rocks
+                    const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+                    const material = new THREE.MeshStandardMaterial({ color: 0x4CC3D9 });
+                    const cube = new THREE.Mesh(geometry, material);
+                    
+                    cube.position.copy(position);
+                    webarContent.add(cube);
+                    
+                    // Add rotation animation
+                    function animate() {
+                        requestAnimationFrame(animate);
+                        cube.rotation.y += 0.01;
+                    }
+                    animate();
+                    
+                    webarSurfaceMarker.style.display = 'none';
+                    webarPlacementUI.style.display = 'none';
+                } 
+                else if (mode === 'webxr') {
+                    const content = webxrContent;
+                    const placementUI = webxrPlacementUI;
+                    
+                    // Create a simple 3D model (you can replace with your own model)
+                    const model = document.createElement('a-entity');
+                    model.setAttribute('geometry', 'primitive: box; width: 0.2; height: 0.2; depth: 0.2');
+                    model.setAttribute('material', 'color: #4CC3D9');
+                    model.setAttribute('position', position);
+                    model.setAttribute('animation', {
+                        property: 'rotation',
+                        to: '0 360 0',
+                        loop: true,
+                        dur: 10000
+                    });
+                    
+                    content.appendChild(model);
                     webxrSurfaceMarker.setAttribute('visible', 'false');
-                } else {
+                    placementUI.setAttribute('visible', 'false');
+                } 
+                else if (mode === 'arjs') {
+                    const content = arjsContent;
+                    const placementUI = arjsPlacementUI;
+                    
+                    // Create a simple 3D model (you can replace with your own model)
+                    const model = document.createElement('a-entity');
+                    model.setAttribute('geometry', 'primitive: box; width: 0.2; height: 0.2; depth: 0.2');
+                    model.setAttribute('material', 'color: #4CC3D9');
+                    model.setAttribute('position', position);
+                    model.setAttribute('animation', {
+                        property: 'rotation',
+                        to: '0 360 0',
+                        loop: true,
+                        dur: 10000
+                    });
+                    
+                    content.appendChild(model);
                     arjsSurfaceMarker.setAttribute('visible', 'false');
+                    placementUI.setAttribute('visible', 'false');
                 }
-                
-                placementUI.setAttribute('visible', 'false');
             }
             
             // Start AR experience
@@ -339,9 +510,13 @@
                     let initialized = false;
                     currentMode = arSupport;
                     
-                    if (arSupport === 'webxr') {
+                    if (arSupport === 'webar') {
+                        initialized = await initWebAR();
+                    } 
+                    else if (arSupport === 'webxr') {
                         initialized = await initWebXR();
-                    } else if (arSupport === 'arjs') {
+                    } 
+                    else if (arSupport === 'arjs') {
                         initialized = initARJS();
                     }
                     
@@ -358,7 +533,12 @@
             
             // Handle tap to place
             function handleTap(event) {
-                if (currentMode === 'webxr') {
+                if (currentMode === 'webar') {
+                    if (webarPlacementUI.style.display === 'block' && webarHitTestPosition) {
+                        placeContent(webarHitTestPosition.clone(), 'webar');
+                    }
+                } 
+                else if (currentMode === 'webxr') {
                     if (webxrPlacementUI.getAttribute('visible') === 'true' && lastHitPosition) {
                         placeContent({
                             x: lastHitPosition.x,
@@ -366,7 +546,8 @@
                             z: lastHitPosition.z
                         }, 'webxr');
                     }
-                } else if (currentMode === 'arjs') {
+                } 
+                else if (currentMode === 'arjs') {
                     if (arjsPlacementUI.getAttribute('visible') === 'true') {
                         placeContent({
                             x: 0,
