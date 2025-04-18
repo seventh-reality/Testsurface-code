@@ -7,6 +7,8 @@
     <title>Free Markerless AR with SLAM</title>
     <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- GLTFLoader -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.min.js"></script>
     <!-- A-Frame -->
     <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe-master.min.js"></script>
     <!-- WebAR.rocks for SLAM -->
@@ -111,6 +113,44 @@
             font-size: 16px;
             cursor: pointer;
         }
+        #webar-surface-marker {
+            display: none;
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            border: 2px solid cyan;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #webar-placement-ui {
+            display: none;
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-size: 18px;
+            text-shadow: 0 0 5px black;
+        }
+        #model-selector {
+            display: none;
+            position: absolute;
+            bottom: 80px;
+            width: 100%;
+            text-align: center;
+            z-index: 1000;
+        }
+        .model-btn {
+            margin: 5px;
+            padding: 8px 15px;
+            background-color: rgba(76, 175, 80, 0.7);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -135,9 +175,12 @@
     <!-- WebAR.rocks SLAM container -->
     <div id="webar-container">
         <canvas id="webar-canvas"></canvas>
-        <div id="webar-surface-marker" style="display: none; position: absolute; width: 40px; height: 40px; border: 2px solid cyan; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none;"></div>
-        <div id="webar-placement-ui" style="display: none; position: absolute; bottom: 20px; width: 100%; text-align: center; color: white; font-size: 18px; text-shadow: 0 0 5px black;">
-            Point at a flat surface and tap to place
+        <div id="webar-surface-marker"></div>
+        <div id="webar-placement-ui">Point at a flat surface and tap to place</div>
+        <div id="model-selector">
+            <button class="model-btn" data-model="box">Simple Box</button>
+            <button class="model-btn" data-model="https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Duck/glTF/Duck.gltf">Duck</button>
+            <button class="model-btn" data-model="https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf">Helmet</button>
         </div>
     </div>
 
@@ -155,6 +198,23 @@
                    position="0 -0.5 0" 
                    color="white" 
                    width="2"></a-text>
+        </a-entity>
+        <a-entity id="webxr-model-selector" visible="false">
+            <a-entity position="0 -1 0">
+                <a-text value="Select Model:" align="center" color="white" width="2"></a-text>
+                <a-entity position="-0.5 -0.5 0">
+                    <a-box color="#4CC3D9" width="0.3" height="0.3" depth="0.3" class="selectable" data-model="box"></a-box>
+                    <a-text value="Box" position="0 -0.3 0" align="center" color="white" width="1"></a-text>
+                </a-entity>
+                <a-entity position="0 -0.5 0">
+                    <a-entity gltf-model="https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Duck/glTF/Duck.gltf" scale="0.3 0.3 0.3" class="selectable" data-model="https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Duck/glTF/Duck.gltf"></a-entity>
+                    <a-text value="Duck" position="0 -0.3 0" align="center" color="white" width="1"></a-text>
+                </a-entity>
+                <a-entity position="0.5 -0.5 0">
+                    <a-entity gltf-model="https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf" scale="0.3 0.3 0.3" class="selectable" data-model="https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf"></a-entity>
+                    <a-text value="Helmet" position="0 -0.3 0" align="center" color="white" width="1"></a-text>
+                </a-entity>
+            </a-entity>
         </a-entity>
         <a-entity light="type: ambient; color: #FFF; intensity: 0.6"></a-entity>
         <a-entity light="type: directional; color: #FFF; intensity: 0.8" position="-1 2 1"></a-entity>
@@ -181,6 +241,23 @@
                    color="white" 
                    width="2"></a-text>
         </a-entity>
+        <a-entity id="arjs-model-selector" visible="false">
+            <a-entity position="0 -1 0">
+                <a-text value="Select Model:" align="center" color="white" width="2"></a-text>
+                <a-entity position="-0.5 -0.5 0">
+                    <a-box color="#4CC3D9" width="0.3" height="0.3" depth="0.3" class="selectable" data-model="box"></a-box>
+                    <a-text value="Box" position="0 -0.3 0" align="center" color="white" width="1"></a-text>
+                </a-entity>
+                <a-entity position="0 -0.5 0">
+                    <a-entity gltf-model="https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Duck/glTF/Duck.gltf" scale="0.3 0.3 0.3" class="selectable" data-model="https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Duck/glTF/Duck.gltf"></a-entity>
+                    <a-text value="Duck" position="0 -0.3 0" align="center" color="white" width="1"></a-text>
+                </a-entity>
+                <a-entity position="0.5 -0.5 0">
+                    <a-entity gltf-model="https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf" scale="0.3 0.3 0.3" class="selectable" data-model="https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf"></a-entity>
+                    <a-text value="Helmet" position="0 -0.3 0" align="center" color="white" width="1"></a-text>
+                </a-entity>
+            </a-entity>
+        </a-entity>
         <a-entity light="type: ambient; color: #FFF; intensity: 0.6"></a-entity>
         <a-entity light="type: directional; color: #FFF; intensity: 0.8" position="-1 2 1"></a-entity>
     </a-scene>
@@ -200,18 +277,22 @@
             const webarCanvas = document.getElementById('webar-canvas');
             const webarSurfaceMarker = document.getElementById('webar-surface-marker');
             const webarPlacementUI = document.getElementById('webar-placement-ui');
+            const modelSelector = document.getElementById('model-selector');
+            const modelButtons = document.querySelectorAll('.model-btn');
             
             // WebXR elements
             const webxrScene = document.getElementById('webxr-scene');
             const webxrContent = document.getElementById('webxr-content');
             const webxrSurfaceMarker = document.getElementById('webxr-surface-marker');
             const webxrPlacementUI = document.getElementById('webxr-placement-ui');
+            const webxrModelSelector = document.getElementById('webxr-model-selector');
             
             // AR.js elements
             const arjsScene = document.getElementById('arjs-scene');
             const arjsContent = document.getElementById('arjs-content');
             const arjsSurfaceMarker = document.getElementById('arjs-surface-marker');
             const arjsPlacementUI = document.getElementById('arjs-placement-ui');
+            const arjsModelSelector = document.getElementById('arjs-model-selector');
             
             let currentMode = null;
             let hitTestSource = null;
@@ -222,6 +303,8 @@
             let webarRenderer = null;
             let webarContent = null;
             let webarHitTestPosition = null;
+            let selectedModel = 'box'; // Default model
+            let gltfLoader = new THREE.GLTFLoader();
             
             // Check if iOS
             const isIOS = () => {
@@ -310,6 +393,7 @@
                             console.log('WebAR.rocks SLAM is ready');
                             loader.style.display = 'none';
                             webarPlacementUI.style.display = 'block';
+                            modelSelector.style.display = 'block';
                         },
                         onError: (error) => {
                             console.error('WebAR.rocks error:', error);
@@ -394,6 +478,7 @@
                     // Hide loader and show UI
                     loader.style.display = 'none';
                     webxrPlacementUI.setAttribute('visible', 'true');
+                    webxrModelSelector.setAttribute('visible', 'true');
                     
                     // Start render loop
                     renderer.setAnimationLoop((timestamp, frame) => {
@@ -429,6 +514,7 @@
                         webxrContent.innerHTML = '';
                         webxrSurfaceMarker.setAttribute('visible', 'false');
                         webxrPlacementUI.setAttribute('visible', 'false');
+                        webxrModelSelector.setAttribute('visible', 'false');
                     });
                     
                     return true;
@@ -449,7 +535,6 @@
                     
                     arjsScene.addEventListener('camera-move', () => {
                         // Simplified surface detection for AR.js
-                        // In a real app, you might want to use AR.js's location-based features
                         lastMarkerPosition = {
                             x: 0,
                             y: -0.5,
@@ -463,6 +548,7 @@
                     // Hide loader and show UI
                     loader.style.display = 'none';
                     arjsPlacementUI.setAttribute('visible', 'true');
+                    arjsModelSelector.setAttribute('visible', 'true');
                     
                     return true;
                 } catch (error) {
@@ -471,23 +557,59 @@
                 }
             }
             
+            // Load GLB model for WebAR.rocks
+            function loadGLBModel(url, position, callback) {
+                gltfLoader.load(
+                    url,
+                    (gltf) => {
+                        const model = gltf.scene;
+                        model.position.copy(position);
+                        model.scale.set(0.3, 0.3, 0.3);
+                        callback(model);
+                    },
+                    undefined,
+                    (error) => {
+                        console.error('Error loading GLB model:', error);
+                        // Fallback to simple box
+                        const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+                        const material = new THREE.MeshStandardMaterial({ color: 0x4CC3D9 });
+                        const cube = new THREE.Mesh(geometry, material);
+                        cube.position.copy(position);
+                        callback(cube);
+                    }
+                );
+            }
+            
             // Place AR content
             function placeContent(position, mode) {
                 if (mode === 'webar') {
-                    // Create a simple 3D model for WebAR.rocks
-                    const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-                    const material = new THREE.MeshStandardMaterial({ color: 0x4CC3D9 });
-                    const cube = new THREE.Mesh(geometry, material);
-                    
-                    cube.position.copy(position);
-                    webarContent.add(cube);
-                    
-                    // Add rotation animation
-                    function animate() {
-                        requestAnimationFrame(animate);
-                        cube.rotation.y += 0.01;
+                    if (selectedModel === 'box') {
+                        // Create a simple 3D model
+                        const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+                        const material = new THREE.MeshStandardMaterial({ color: 0x4CC3D9 });
+                        const cube = new THREE.Mesh(geometry, material);
+                        cube.position.copy(position);
+                        webarContent.add(cube);
+                        
+                        // Add rotation animation
+                        function animate() {
+                            requestAnimationFrame(animate);
+                            cube.rotation.y += 0.01;
+                        }
+                        animate();
+                    } else {
+                        // Load GLB model
+                        loadGLBModel(selectedModel, position, (model) => {
+                            webarContent.add(model);
+                            
+                            // Add rotation animation
+                            function animate() {
+                                requestAnimationFrame(animate);
+                                model.rotation.y += 0.01;
+                            }
+                            animate();
+                        });
                     }
-                    animate();
                     
                     webarSurfaceMarker.style.display = 'none';
                     webarPlacementUI.style.display = 'none';
@@ -495,11 +617,19 @@
                 else if (mode === 'webxr') {
                     const content = webxrContent;
                     const placementUI = webxrPlacementUI;
+                    const modelSelector = webxrModelSelector;
                     
-                    // Create a simple 3D model (you can replace with your own model)
+                    // Create model based on selection
                     const model = document.createElement('a-entity');
-                    model.setAttribute('geometry', 'primitive: box; width: 0.2; height: 0.2; depth: 0.2');
-                    model.setAttribute('material', 'color: #4CC3D9');
+                    
+                    if (selectedModel === 'box') {
+                        model.setAttribute('geometry', 'primitive: box; width: 0.2; height: 0.2; depth: 0.2');
+                        model.setAttribute('material', 'color: #4CC3D9');
+                    } else {
+                        model.setAttribute('gltf-model', selectedModel);
+                        model.setAttribute('scale', '0.3 0.3 0.3');
+                    }
+                    
                     model.setAttribute('position', position);
                     model.setAttribute('animation', {
                         property: 'rotation',
@@ -511,15 +641,24 @@
                     content.appendChild(model);
                     webxrSurfaceMarker.setAttribute('visible', 'false');
                     placementUI.setAttribute('visible', 'false');
+                    modelSelector.setAttribute('visible', 'false');
                 } 
                 else if (mode === 'arjs') {
                     const content = arjsContent;
                     const placementUI = arjsPlacementUI;
+                    const modelSelector = arjsModelSelector;
                     
-                    // Create a simple 3D model (you can replace with your own model)
+                    // Create model based on selection
                     const model = document.createElement('a-entity');
-                    model.setAttribute('geometry', 'primitive: box; width: 0.2; height: 0.2; depth: 0.2');
-                    model.setAttribute('material', 'color: #4CC3D9');
+                    
+                    if (selectedModel === 'box') {
+                        model.setAttribute('geometry', 'primitive: box; width: 0.2; height: 0.2; depth: 0.2');
+                        model.setAttribute('material', 'color: #4CC3D9');
+                    } else {
+                        model.setAttribute('gltf-model', selectedModel);
+                        model.setAttribute('scale', '0.3 0.3 0.3');
+                    }
+                    
                     model.setAttribute('position', position);
                     model.setAttribute('animation', {
                         property: 'rotation',
@@ -531,6 +670,7 @@
                     content.appendChild(model);
                     arjsSurfaceMarker.setAttribute('visible', 'false');
                     placementUI.setAttribute('visible', 'false');
+                    modelSelector.setAttribute('visible', 'false');
                 }
             }
             
@@ -575,6 +715,9 @@
             
             // Handle tap to place
             function handleTap(event) {
+                // Ignore clicks on buttons
+                if (event.target.tagName === 'BUTTON') return;
+                
                 if (currentMode === 'webar') {
                     if (webarPlacementUI.style.display === 'block' && webarHitTestPosition) {
                         placeContent(webarHitTestPosition.clone(), 'webar');
@@ -600,10 +743,25 @@
                 }
             }
             
+            // Handle model selection
+            function handleModelSelection(event) {
+                if (event.target.classList.contains('model-btn') {
+                    selectedModel = event.target.dataset.model;
+                } else if (event.target.classList.contains('selectable')) {
+                    selectedModel = event.target.dataset.model;
+                }
+            }
+            
             // Add event listeners
             document.addEventListener('click', handleTap);
             startButton.addEventListener('click', startAR);
             iosStartButton.addEventListener('click', startAR);
+            modelButtons.forEach(btn => btn.addEventListener('click', handleModelSelection));
+            document.addEventListener('click', (e) => {
+                if (e.target.classList.contains('selectable')) {
+                    handleModelSelection(e);
+                }
+            });
             
             // Check iOS and handle permissions
             if (isIOS()) {
