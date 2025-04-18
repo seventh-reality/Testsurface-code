@@ -312,6 +312,11 @@
                       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
             };
             
+            // Check if Android
+            const isAndroid = () => {
+                return /Android/.test(navigator.userAgent);
+            };
+            
             // Show error message
             function showError(title, message) {
                 errorTitle.textContent = title;
@@ -341,12 +346,12 @@
                 }
                 
                 // Then check for WebAR.rocks SLAM support
-                if (WEBARROCKS_THREE.isWebARCameraAvailable()) {
+                if (WEBARROCKS_THREE && WEBARROCKS_THREE.isWebARCameraAvailable()) {
                     return 'webar';
                 }
                 
                 // Then check for AR.js compatibility (older devices)
-                if (AFRAME.utils.device.checkWebAR()) {
+                if (AFRAME && AFRAME.utils && AFRAME.utils.device && AFRAME.utils.device.checkWebAR()) {
                     return 'arjs';
                 }
                 
@@ -453,6 +458,11 @@
             // Initialize WebXR AR
             async function initWebXR() {
                 try {
+                    // First request camera access
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    // Immediately stop the stream as we just needed permission
+                    stream.getTracks().forEach(track => track.stop());
+                    
                     const session = await navigator.xr.requestSession('immersive-ar', {
                         requiredFeatures: ['hit-test'],
                         optionalFeatures: ['dom-overlay'],
@@ -525,8 +535,13 @@
             }
             
             // Initialize AR.js
-            function initARJS() {
+            async function initARJS() {
                 try {
+                    // First request camera access
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    // Immediately stop the stream as we just needed permission
+                    stream.getTracks().forEach(track => track.stop());
+                    
                     // Show the AR.js scene
                     arjsScene.setAttribute('visible', 'true');
                     
@@ -679,16 +694,21 @@
                 hideError();
                 loader.style.display = 'flex';
                 
-                const arSupport = await checkARSupport();
-                
-                if (!arSupport) {
-                    showError("AR Not Supported", 
-                        "Your device or browser doesn't support AR features. " +
-                        "Please try on a newer Android device with Chrome or iOS device with Safari.");
-                    return;
-                }
-                
                 try {
+                    // First check if we have camera access
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    // Immediately stop the stream as we just needed permission
+                    stream.getTracks().forEach(track => track.stop());
+                    
+                    const arSupport = await checkARSupport();
+                    
+                    if (!arSupport) {
+                        showError("AR Not Supported", 
+                            "Your device or browser doesn't support AR features. " +
+                            "Please try on a newer Android device with Chrome or iOS device with Safari.");
+                        return;
+                    }
+                    
                     let initialized = false;
                     currentMode = arSupport;
                     
@@ -699,7 +719,7 @@
                         initialized = await initWebXR();
                     } 
                     else if (arSupport === 'arjs') {
-                        initialized = initARJS();
+                        initialized = await initARJS();
                     }
                     
                     if (!initialized) {
@@ -708,8 +728,13 @@
                             "Please make sure you're in a well-lit environment and try again.");
                     }
                 } catch (error) {
-                    showError("AR Error", 
-                        "An error occurred while starting AR: " + error.message);
+                    if (error.name === 'NotAllowedError') {
+                        showError("Camera Access Denied", 
+                            "Please allow camera access to use AR features.");
+                    } else {
+                        showError("AR Error", 
+                            "An error occurred while starting AR: " + error.message);
+                    }
                 }
             }
             
@@ -745,7 +770,7 @@
             
             // Handle model selection
             function handleModelSelection(event) {
-                if (event.target.classList.contains('model-btn') {
+                if (event.target.classList.contains('model-btn')) {
                     selectedModel = event.target.dataset.model;
                 } else if (event.target.classList.contains('selectable')) {
                     selectedModel = event.target.dataset.model;
