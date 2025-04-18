@@ -11,6 +11,8 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.min.js"></script>
     <!-- A-Frame -->
     <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe-master.min.js"></script>
+    <!-- AR.js with WebXR support -->
+    <script src="https://cdn.jsdelivr.net/npm/ar.js@3.4.0/dist/ar.js"></script>
     <!-- WebAR.rocks for SLAM -->
     <script src="https://cdn.jsdelivr.net/gh/WebAR-rocks/webar.rocks.three@latest/dist/webar.rocks.three.min.js"></script>
     <style>
@@ -355,8 +357,8 @@
                     return 'webar';
                 }
                 
-                // Then check for AR.js compatibility (older devices)
-                if (AFRAME && AFRAME.utils && AFRAME.utils.device && AFRAME.utils.device.checkWebAR()) {
+                // Then check for AR.js compatibility (using newer method)
+                if (window.ARjs && window.ARjs.AnchorDebugUI && window.ARjs.Context) {
                     return 'arjs';
                 }
                 
