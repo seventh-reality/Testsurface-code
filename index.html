@@ -2,15 +2,16 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-    <title>Markerless AR with SLAM</title>
+    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+    <title>Advanced Markerless AR</title>
     <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v6.1.1/dist/aframe-extras.loaders.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <style>
         body {
             margin: 0;
             overflow: hidden;
+            font-family: Arial, sans-serif;
         }
         .arjs-loader {
             height: 100%;
@@ -30,73 +31,65 @@
             text-align: center;
             font-size: 1.25em;
             margin-top: 1em;
+            max-width: 80%;
+        }
+        #error-message {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 0, 0, 0.7);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            z-index: 10000;
+            text-align: center;
         }
     </style>
 </head>
 <body>
     <div class="arjs-loader">
-        <div>Loading, please wait...</div>
-        <div>For best results, move your device slowly to detect surfaces</div>
+        <div>Initializing AR, please wait...</div>
+        <div>Move your device slowly to detect surfaces</div>
     </div>
+
+    <div id="error-message"></div>
 
     <a-scene 
         vr-mode-ui="enabled: false"
-        renderer="logarithmicDepthBuffer: true;"
+        renderer="logarithmicDepthBuffer: true; precision: medium;"
         embedded 
         arjs="sourceType: webcam; detectionMode: mono_and_matrix; matrixCodeType: 3x3; debugUIEnabled: false;"
         gesture-detector
         id="scene">
         
-        <!-- SLAM-based camera -->
+        <!-- Camera -->
         <a-entity camera></a-entity>
         
-        <!-- Light -->
-        <a-entity light="type: ambient; color: #CCC; intensity: 0.5"></a-entity>
-        <a-entity light="type: directional; color: #FFF; intensity: 0.5" position="-1 1 0"></a-entity>
+        <!-- Lighting -->
+        <a-entity light="type: ambient; color: #FFF; intensity: 0.6"></a-entity>
+        <a-entity light="type: directional; color: #FFF; intensity: 0.8" position="-1 2 1"></a-entity>
         
-        <!-- AR content -->
-        <a-entity id="ar-content" visible="false">
-            <!-- Example 3D model -->
-            <a-entity 
-                gltf-model="#model" 
-                scale="0.1 0.1 0.1" 
-                position="0 0 -1"
-                animation="property: rotation; to: 0 360 0; loop: true; dur: 10000">
-            </a-entity>
-            
-            <!-- Plane indicator for surface detection -->
-            <a-entity 
-                id="plane" 
-                geometry="primitive: plane; width: 1; height: 1" 
-                material="color: #7BC8A4; opacity: 0.5; shader: flat" 
-                rotation="-90 0 0" 
-                visible="false">
-            </a-entity>
+        <!-- AR Content Group -->
+        <a-entity id="ar-content">
+            <!-- This will be populated dynamically -->
         </a-entity>
         
-        <!-- UI for interaction -->
-        <a-entity id="clickable" class="clickable" visible="false">
-            <a-ring 
-                color="teal" 
-                radius-inner="0.1" 
-                radius-outer="0.2" 
-                position="0 0 -1">
-            </a-ring>
-            <a-text 
-                value="Tap to place object" 
-                align="center" 
-                position="0 -0.25 -1" 
-                color="black" 
-                width="2">
-            </a-text>
+        <!-- Surface Mesh (will be shown during tracking) -->
+        <a-entity id="surface-mesh" visible="false"></a-entity>
+        
+        <!-- UI for placement -->
+        <a-entity id="placement-ui" visible="false">
+            <a-ring color="cyan" radius-inner="0.05" radius-outer="0.1" position="0 0 -0.5"></a-ring>
+            <a-text value="Point at a surface and tap to place" 
+                   align="center" 
+                   position="0 -0.15 -0.5" 
+                   color="white" 
+                   width="1.5"></a-text>
         </a-entity>
     </a-scene>
-    
-    <!-- Asset for 3D model -->
-    <a-assets>
-        <a-asset-item id="model" src="all.glb"></a-asset-item>
-    </a-assets>
-    
+
     <script src="app.js"></script>
 </body>
 </html>
