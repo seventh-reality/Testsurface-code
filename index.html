@@ -2,16 +2,17 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
-    <title>Advanced Markerless AR</title>
-    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Fixed Markerless AR</title>
+    <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe-master.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
     <style>
         body {
             margin: 0;
             overflow: hidden;
-            font-family: Arial, sans-serif;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
         }
         .arjs-loader {
             height: 100%;
@@ -31,65 +32,266 @@
             text-align: center;
             font-size: 1.25em;
             margin-top: 1em;
-            max-width: 80%;
+            padding: 0 20px;
         }
-        #error-message {
+        #error-panel {
             display: none;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(255, 0, 0, 0.7);
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.8);
             color: white;
-            padding: 20px;
-            border-radius: 10px;
             z-index: 10000;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
             text-align: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #start-button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
         }
     </style>
 </head>
 <body>
     <div class="arjs-loader">
-        <div>Initializing AR, please wait...</div>
-        <div>Move your device slowly to detect surfaces</div>
+        <div>Initializing AR environment...</div>
+        <div>Please allow camera access when prompted</div>
     </div>
 
-    <div id="error-message"></div>
+    <div id="error-panel">
+        <h2 id="error-title">AR Not Available</h2>
+        <div id="error-message"></div>
+        <button id="start-button">Try Again</button>
+    </div>
 
     <a-scene 
         vr-mode-ui="enabled: false"
         renderer="logarithmicDepthBuffer: true; precision: medium;"
         embedded 
         arjs="sourceType: webcam; detectionMode: mono_and_matrix; matrixCodeType: 3x3; debugUIEnabled: false;"
-        gesture-detector
         id="scene">
         
-        <!-- Camera -->
-        <a-entity camera></a-entity>
+        <a-camera gps-camera rotation-reader></a-camera>
         
-        <!-- Lighting -->
         <a-entity light="type: ambient; color: #FFF; intensity: 0.6"></a-entity>
         <a-entity light="type: directional; color: #FFF; intensity: 0.8" position="-1 2 1"></a-entity>
         
-        <!-- AR Content Group -->
-        <a-entity id="ar-content">
-            <!-- This will be populated dynamically -->
+        <a-entity id="ar-content"></a-entity>
+        
+        <a-entity id="surface-marker" visible="false">
+            <a-ring color="cyan" radius-inner="0.1" radius-outer="0.2"></a-ring>
+            <a-circle color="white" opacity="0.5" radius="0.3" position="0 0.01 0" rotation="-90 0 0"></a-circle>
         </a-entity>
         
-        <!-- Surface Mesh (will be shown during tracking) -->
-        <a-entity id="surface-mesh" visible="false"></a-entity>
-        
-        <!-- UI for placement -->
         <a-entity id="placement-ui" visible="false">
-            <a-ring color="cyan" radius-inner="0.05" radius-outer="0.1" position="0 0 -0.5"></a-ring>
-            <a-text value="Point at a surface and tap to place" 
+            <a-text value="Point at a flat surface and tap to place" 
                    align="center" 
-                   position="0 -0.15 -0.5" 
+                   position="0 -0.5 0" 
                    color="white" 
-                   width="1.5"></a-text>
+                   width="2"></a-text>
         </a-entity>
     </a-scene>
 
-    <script src="app.js"></script>
+    <script>
+        // Polyfill for Safari and older browsers
+        if (!navigator.xr) {
+            navigator.xr = {
+                isSessionSupported: () => Promise.resolve(false)
+            };
+        }
+
+        // Main application
+        document.addEventListener('DOMContentLoaded', () => {
+            const scene = document.querySelector('a-scene');
+            const loader = document.querySelector('.arjs-loader');
+            const errorPanel = document.getElementById('error-panel');
+            const errorTitle = document.getElementById('error-title');
+            const errorMessage = document.getElementById('error-message');
+            const startButton = document.getElementById('start-button');
+            const arContent = document.getElementById('ar-content');
+            const surfaceMarker = document.getElementById('surface-marker');
+            const placementUI = document.getElementById('placement-ui');
+            
+            let arSession = null;
+            let hitTestSource = null;
+            let modelPlaced = false;
+            let lastHitPosition = null;
+            
+            // Show error message
+            function showError(title, message) {
+                errorTitle.textContent = title;
+                errorMessage.textContent = message;
+                errorPanel.style.display = 'flex';
+                loader.style.display = 'none';
+                console.error(title + ": " + message);
+            }
+            
+            // Hide error message
+            function hideError() {
+                errorPanel.style.display = 'none';
+            }
+            
+            // Start AR experience
+            async function startAR() {
+                hideError();
+                loader.style.display = 'flex';
+                
+                try {
+                    // Check for WebXR support
+                    const isSupported = await navigator.xr.isSessionSupported('immersive-ar');
+                    
+                    if (!isSupported) {
+                        // Fallback to AR.js for older devices
+                        initARJS();
+                        return;
+                    }
+                    
+                    // Request AR session
+                    const session = await navigator.xr.requestSession('immersive-ar', {
+                        requiredFeatures: ['hit-test'],
+                        optionalFeatures: ['dom-overlay'],
+                        domOverlay: { root: document.body }
+                    });
+                    
+                    arSession = session;
+                    
+                    // Set up Three.js renderer for AR
+                    scene.renderer.xr.enabled = true;
+                    scene.renderer.xr.setReferenceSpaceType('local');
+                    scene.renderer.xr.setSession(session);
+                    
+                    // Get reference space
+                    const referenceSpace = await session.requestReferenceSpace('local');
+                    const viewerSpace = await session.requestReferenceSpace('viewer');
+                    
+                    // Create hit test source
+                    hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+                    
+                    // Hide loader and show UI
+                    loader.style.display = 'none';
+                    placementUI.setAttribute('visible', 'true');
+                    
+                    // Start render loop
+                    scene.renderer.setAnimationLoop((timestamp, frame) => {
+                        if (!frame || !hitTestSource) return;
+                        
+                        const pose = frame.getViewerPose(referenceSpace);
+                        if (!pose) return;
+                        
+                        const hitTestResults = frame.getHitTestResults(hitTestSource);
+                        
+                        if (!modelPlaced && hitTestResults.length > 0) {
+                            const hit = hitTestResults[0];
+                            const hitPose = hit.getPose(referenceSpace);
+                            lastHitPosition = hitPose.transform.position;
+                            
+                            // Update surface marker
+                            surfaceMarker.setAttribute('visible', 'true');
+                            surfaceMarker.object3D.position.set(
+                                hitPose.transform.position.x,
+                                hitPose.transform.position.y,
+                                hitPose.transform.position.z
+                            );
+                        } else {
+                            surfaceMarker.setAttribute('visible', 'false');
+                        }
+                    });
+                    
+                    // Handle session end
+                    session.addEventListener('end', () => {
+                        scene.renderer.setAnimationLoop(null);
+                        arSession = null;
+                        hitTestSource = null;
+                        modelPlaced = false;
+                        surfaceMarker.setAttribute('visible', 'false');
+                        placementUI.setAttribute('visible', 'false');
+                        arContent.innerHTML = '';
+                    });
+                    
+                } catch (error) {
+                    console.error('AR initialization failed:', error);
+                    
+                    // Try AR.js fallback
+                    try {
+                        initARJS();
+                    } catch (fallbackError) {
+                        showError("AR Failed", 
+                            "Could not initialize AR on your device. " +
+                            "Make sure you're using a supported browser (Chrome for Android, Safari for iOS) " +
+                            "and that your device supports ARCore/ARKit.");
+                    }
+                }
+            }
+            
+            // Fallback to AR.js for older devices
+            function initARJS() {
+                loader.style.display = 'none';
+                placementUI.setAttribute('visible', 'true');
+                
+                scene.addEventListener('markerFound', () => {
+                    surfaceMarker.setAttribute('visible', 'true');
+                });
+                
+                scene.addEventListener('markerLost', () => {
+                    surfaceMarker.setAttribute('visible', 'false');
+                });
+            }
+            
+            // Handle tap to place model
+            scene.addEventListener('click', () => {
+                if (modelPlaced || !lastHitPosition) return;
+                
+                // Create and place a model
+                const model = document.createElement('a-entity');
+                model.setAttribute('geometry', 'primitive: box');
+                model.setAttribute('material', 'color: #4CC3D9');
+                model.setAttribute('scale', '0.2 0.2 0.2');
+                model.setAttribute('position', {
+                    x: lastHitPosition.x,
+                    y: lastHitPosition.y,
+                    z: lastHitPosition.z
+                });
+                model.setAttribute('animation', {
+                    property: 'rotation',
+                    to: '0 360 0',
+                    loop: true,
+                    dur: 10000
+                });
+                
+                arContent.appendChild(model);
+                modelPlaced = true;
+                surfaceMarker.setAttribute('visible', 'false');
+                placementUI.setAttribute('visible', 'false');
+            });
+            
+            // Retry button
+            startButton.addEventListener('click', startAR);
+            
+            // Start AR when scene is loaded
+            scene.addEventListener('loaded', () => {
+                // Check if we're on iOS
+                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                             (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+                
+                // iOS requires user gesture to start
+                if (isIOS) {
+                    showError("AR Ready", "Tap the button below to start AR experience");
+                } else {
+                    startAR();
+                }
+            });
+        });
+    </script>
 </body>
 </html>
