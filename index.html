@@ -84,6 +84,33 @@
             width: 100%;
             height: 100%;
         }
+        #ios-permission-panel {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.8);
+            color: white;
+            z-index: 10001;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #ios-start-button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -96,6 +123,13 @@
         <h2 id="error-title">AR Not Available</h2>
         <div id="error-message"></div>
         <button id="start-button">Try Again</button>
+    </div>
+
+    <div id="ios-permission-panel">
+        <h2>AR Experience Ready</h2>
+        <p>To start the AR experience, please tap the button below.</p>
+        <p>You'll need to allow camera access when prompted.</p>
+        <button id="ios-start-button">Start AR</button>
     </div>
 
     <!-- WebAR.rocks SLAM container -->
@@ -158,6 +192,8 @@
             const errorTitle = document.getElementById('error-title');
             const errorMessage = document.getElementById('error-message');
             const startButton = document.getElementById('start-button');
+            const iosPermissionPanel = document.getElementById('ios-permission-panel');
+            const iosStartButton = document.getElementById('ios-start-button');
             
             // WebAR.rocks elements
             const webarContainer = document.getElementById('webar-container');
@@ -186,6 +222,12 @@
             let webarRenderer = null;
             let webarContent = null;
             let webarHitTestPosition = null;
+            
+            // Check if iOS
+            const isIOS = () => {
+                return /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            };
             
             // Show error message
             function showError(title, message) {
@@ -257,7 +299,7 @@
                     directionalLight.position.set(-1, 2, 1);
                     webarScene.add(directionalLight);
                     
-                    // Initialize SLAM
+                    // Initialize SLAM with proper iOS handling
                     webarSlam = new WEBARROCKS_THREE.WebARCamera({
                         renderer: webarRenderer,
                         scene: webarScene,
@@ -561,29 +603,20 @@
             // Add event listeners
             document.addEventListener('click', handleTap);
             startButton.addEventListener('click', startAR);
+            iosStartButton.addEventListener('click', startAR);
             
-            // Start AR when ready
-            if (document.readyState === 'complete') {
-                // iOS requires user gesture
-                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-                             (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-                
-                if (isIOS) {
-                    showError("AR Ready", "Tap the button below to start AR experience");
-                } else {
-                    startAR();
-                }
+            // Check iOS and handle permissions
+            if (isIOS()) {
+                // On iOS, we need to wait for a user gesture to request camera
+                iosPermissionPanel.style.display = 'flex';
+                loader.style.display = 'none';
             } else {
-                window.addEventListener('load', () => {
-                    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-                                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-                    
-                    if (isIOS) {
-                        showError("AR Ready", "Tap the button below to start AR experience");
-                    } else {
-                        startAR();
-                    }
-                });
+                // On other platforms, we can start immediately
+                if (document.readyState === 'complete') {
+                    startAR();
+                } else {
+                    window.addEventListener('load', startAR);
+                }
             }
         });
     </script>
