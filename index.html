@@ -243,6 +243,7 @@
             let webarHitTestPosition = null;
             let selectedModel = 'box'; // Default model
             let gltfLoader = new THREE.GLTFLoader();
+            let isContentPlaced = false;
             
             // Predefined models for better performance on older devices
             const models = {
@@ -326,6 +327,11 @@
                     const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
                     webarScene.add(ambientLight);
                     
+                    // Add directional light for better model visibility
+                    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+                    directionalLight.position.set(0, 1, 0);
+                    webarScene.add(directionalLight);
+                    
                     // Initialize SLAM with settings optimized for older devices
                     const slamOptions = {
                         renderer: webarRenderer,
@@ -341,6 +347,7 @@
                             loader.style.display = 'none';
                             webarPlacementUI.style.display = 'block';
                             modelSelector.style.display = 'block';
+                            isContentPlaced = false;
                             
                             // Force canvas update for iOS
                             if (isIOS()) {
@@ -373,8 +380,8 @@
                         if (webarSlam && webarSlam.isReady) {
                             webarSlam.update();
                             
-                            // Perform hit test for surface detection
-                            if (webarSlam.get('poseReady')) {
+                            // Perform hit test for surface detection only if content isn't placed
+                            if (!isContentPlaced && webarSlam.get('poseReady')) {
                                 const hitTestResult = webarSlam.hitTest(0.5, 0.5); // Center of screen
                                 
                                 if (hitTestResult && hitTestResult.length > 0) {
@@ -388,6 +395,7 @@
                                     webarSurfaceMarker.style.top = `${screenPos.y * 100}%`;
                                 } else {
                                     webarSurfaceMarker.style.display = 'none';
+                                    webarHitTestPosition = null;
                                 }
                             }
                             
@@ -425,7 +433,7 @@
                 gltfLoader.load(
                     url,
                     (gltf) => {
-                        const model = gltf.scene;
+                        const model = gltf.scene || gltf.scenes[0];
                         model.position.copy(position);
                         
                         // Simplify model for better performance
@@ -484,6 +492,26 @@
             
             // Place AR content with simplified settings
             function placeContent(position) {
+                // Clear any existing content
+                while (webarContent.children.length > 0) {
+                    const child = webarContent.children[0];
+                    webarContent.remove(child);
+                    
+                    // Clean up resources
+                    if (child.isMesh) {
+                        if (child.geometry) child.geometry.dispose();
+                        if (child.material) {
+                            if (Array.isArray(child.material)) {
+                                child.material.forEach(m => m.dispose());
+                            } else {
+                                child.material.dispose();
+                            }
+                        }
+                    }
+                }
+                
+                isContentPlaced = true;
+                
                 if (selectedModel === 'box') {
                     // Create a simple 3D model with optimized settings
                     const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
@@ -603,7 +631,7 @@
             function handleTap(event) {
                 if (event.target.tagName === 'BUTTON') return;
                 
-                if (webarPlacementUI.style.display === 'block' && webarHitTestPosition) {
+                if (!isContentPlaced && webarPlacementUI.style.display === 'block' && webarHitTestPosition) {
                     placeContent(webarHitTestPosition.clone());
                 }
             }
@@ -612,6 +640,11 @@
             function handleModelSelection(event) {
                 if (event.target.classList.contains('model-btn')) {
                     selectedModel = event.target.dataset.model;
+                    
+                    // Reset placement state when changing models
+                    isContentPlaced = false;
+                    webarPlacementUI.style.display = 'block';
+                    modelSelector.style.display = 'block';
                     
                     // For older devices, preload the selected model
                     if (selectedModel !== 'box' && models[selectedModel]) {
