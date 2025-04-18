@@ -80,12 +80,16 @@
             display: none;
         }
         #webar-canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    /* Add these for iOS */
+    z-index: 1;
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+}
         #ios-permission-panel {
             display: none;
             position: fixed;
@@ -359,163 +363,119 @@
             }
             
             // Initialize WebAR.rocks SLAM
-            async function initWebAR() {
-                try {
-                    // Initialize WebAR.rocks
-                    webarContainer.style.display = 'block';
-                    
-                    // Create Three.js scene
-                    webarScene = new THREE.Scene();
-                    webarCamera = new THREE.PerspectiveCamera();
-                    webarRenderer = new THREE.WebGLRenderer({
-                        canvas: webarCanvas,
-                        antialias: true,
-                        alpha: true
-                    });
-                    webarRenderer.setPixelRatio(window.devicePixelRatio);
-                    webarRenderer.setSize(window.innerWidth, window.innerHeight);
-                    
-                    // Create content container
-                    webarContent = new THREE.Group();
-                    webarScene.add(webarContent);
-                    
-                    // Add lighting
-                    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-                    webarScene.add(ambientLight);
-                    
-                    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-                    directionalLight.position.set(-1, 2, 1);
-                    webarScene.add(directionalLight);
-                    
-                    // Initialize SLAM with proper iOS handling
-                    webarSlam = new WEBARROCKS_THREE.WebARCamera({
-                        renderer: webarRenderer,
-                        scene: webarScene,
-                        camera: webarCamera,
-                        videoElement: webarCanvas,
-                        poseMode: 'slam',
-                        onReady: () => {
-                            console.log('WebAR.rocks SLAM is ready');
-                            loader.style.display = 'none';
-                            webarPlacementUI.style.display = 'block';
-                            modelSelector.style.display = 'block';
-                        },
-                        onError: (error) => {
-                            console.error('WebAR.rocks error:', error);
-                            showError("SLAM Error", "Failed to initialize SLAM tracking. Please try again in a well-lit environment.");
-                        },
-                        onResize: (width, height) => {
-                            webarRenderer.setSize(width, height);
-                        }
-                    });
-                    
-                    // Start render loop
-                    function animate() {
-                        requestAnimationFrame(animate);
-                        
-                        if (webarSlam && webarSlam.isReady) {
-                            // Update SLAM
-                            webarSlam.update();
-                            
-                            // Perform hit test for surface detection
-                            if (webarSlam.get('poseReady')) {
-                                const hitTestResult = webarSlam.hitTest(0.5, 0.5); // Center of screen
-                                
-                                if (hitTestResult && hitTestResult.length > 0) {
-                                    const hit = hitTestResult[0];
-                                    webarHitTestPosition = hit.position;
-                                    
-                                    // Update surface marker
-                                    const screenPos = webarSlam.project(hit.position);
-                                    webarSurfaceMarker.style.display = 'block';
-                                    webarSurfaceMarker.style.left = `${screenPos.x * 100}%`;
-                                    webarSurfaceMarker.style.top = `${screenPos.y * 100}%`;
-                                } else {
-                                    webarSurfaceMarker.style.display = 'none';
-                                }
-                            }
-                            
-                            webarRenderer.render(webarScene, webarCamera);
-                        }
+     async function initWebAR() {
+    try {
+        webarContainer.style.display = 'block';
+        
+        // Clear previous scene if it exists
+        if (webarScene) {
+            webarScene.traverse(object => {
+                if (object.geometry) object.geometry.dispose();
+                if (object.material) {
+                    if (Array.isArray(object.material)) {
+                        object.material.forEach(m => m.dispose());
+                    } else {
+                        object.material.dispose();
                     }
-                    
-                    animate();
-                    
-                    // Handle window resize
-                    window.addEventListener('resize', () => {
-                        if (webarSlam) {
-                            webarSlam.resize();
-                        }
-                    });
-                    
-                    return true;
-                } catch (error) {
-                    console.error('WebAR.rocks initialization failed:', error);
-                    return false;
                 }
+            });
+        }
+        
+        // Create new Three.js scene
+        webarScene = new THREE.Scene();
+        webarCamera = new THREE.PerspectiveCamera();
+        webarRenderer = new THREE.WebGLRenderer({
+            canvas: webarCanvas,
+            antialias: true,
+            alpha: true
+        });
+        webarRenderer.setPixelRatio(window.devicePixelRatio);
+        webarRenderer.setSize(window.innerWidth, window.innerHeight);
+        
+        // Create content container
+        webarContent = new THREE.Group();
+        webarScene.add(webarContent);
+        
+        // Add lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        webarScene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(-1, 2, 1);
+        webarScene.add(directionalLight);
+        
+        // Initialize SLAM with proper iOS handling
+        webarSlam = new WEBARROCKS_THREE.WebARCamera({
+            renderer: webarRenderer,
+            scene: webarScene,
+            camera: webarCamera,
+            videoElement: webarCanvas,
+            poseMode: 'slam',
+            onReady: () => {
+                console.log('WebAR.rocks SLAM is ready');
+                loader.style.display = 'none';
+                webarPlacementUI.style.display = 'block';
+                modelSelector.style.display = 'block';
+                
+                // Force canvas update for iOS
+                if (isIOS()) {
+                    setTimeout(() => {
+                        webarRenderer.render(webarScene, webarCamera);
+                    }, 100);
+                }
+            },
+            onError: (error) => {
+                console.error('WebAR.rocks error:', error);
+                showError("SLAM Error", "Failed to initialize SLAM tracking. Please try again in a well-lit environment.");
+            },
+            onResize: (width, height) => {
+                webarRenderer.setSize(width, height);
             }
+        });
+        
+        // Start render loop
+        function animate() {
+            requestAnimationFrame(animate);
             
-            // Initialize WebXR AR
-            async function initWebXR() {
-                try {
-                    // First request camera access
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    // Immediately stop the stream as we just needed permission
-                    stream.getTracks().forEach(track => track.stop());
+            if (webarSlam && webarSlam.isReady) {
+                webarSlam.update();
+                
+                // Perform hit test for surface detection
+                if (webarSlam.get('poseReady')) {
+                    const hitTestResult = webarSlam.hitTest(0.5, 0.5); // Center of screen
                     
-                    const session = await navigator.xr.requestSession('immersive-ar', {
-                        requiredFeatures: ['hit-test'],
-                        optionalFeatures: ['dom-overlay'],
-                        domOverlay: { root: document.body }
-                    });
-                    
-                    // Set up Three.js renderer for AR
-                    const renderer = webxrScene.renderer;
-                    renderer.xr.enabled = true;
-                    renderer.xr.setReferenceSpaceType('local');
-                    renderer.xr.setSession(session);
-                    
-                    // Get reference space
-                    const referenceSpace = await session.requestReferenceSpace('local');
-                    const viewerSpace = await session.requestReferenceSpace('viewer');
-                    
-                    // Create hit test source
-                    hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-                    
-                    // Show the WebXR scene
-                    webxrScene.setAttribute('visible', 'true');
-                    
-                    // Hide loader and show UI
-                    loader.style.display = 'none';
-                    webxrPlacementUI.setAttribute('visible', 'true');
-                    webxrModelSelector.setAttribute('visible', 'true');
-                    
-                    // Start render loop
-                    renderer.setAnimationLoop((timestamp, frame) => {
-                        if (!frame || !hitTestSource) return;
+                    if (hitTestResult && hitTestResult.length > 0) {
+                        const hit = hitTestResult[0];
+                        webarHitTestPosition = hit.position;
                         
-                        const pose = frame.getViewerPose(referenceSpace);
-                        if (!pose) return;
-                        
-                        const hitTestResults = frame.getHitTestResults(hitTestSource);
-                        
-                        if (hitTestResults.length > 0) {
-                            const hit = hitTestResults[0];
-                            const hitPose = hit.getPose(referenceSpace);
-                            lastHitPosition = hitPose.transform.position;
-                            
-                            // Update surface marker
-                            webxrSurfaceMarker.setAttribute('visible', 'true');
-                            webxrSurfaceMarker.object3D.position.set(
-                                hitPose.transform.position.x,
-                                hitPose.transform.position.y,
-                                hitPose.transform.position.z
-                            );
-                            webxrSurfaceMarker.object3D.quaternion.copy(hitPose.transform.orientation);
-                        } else {
-                            webxrSurfaceMarker.setAttribute('visible', 'false');
-                        }
-                    });
+                        // Update surface marker
+                        const screenPos = webarSlam.project(hit.position);
+                        webarSurfaceMarker.style.display = 'block';
+                        webarSurfaceMarker.style.left = `${screenPos.x * 100}%`;
+                        webarSurfaceMarker.style.top = `${screenPos.y * 100}%`;
+                    } else {
+                        webarSurfaceMarker.style.display = 'none';
+                    }
+                }
+                
+                webarRenderer.render(webarScene, webarCamera);
+            }
+        }
+        
+        animate();
+        
+        window.addEventListener('resize', () => {
+            if (webarSlam) {
+                webarSlam.resize();
+            }
+        });
+        
+        return true;
+    } catch (error) {
+        console.error('WebAR.rocks initialization failed:', error);
+        return false;
+    }
+}
                     
                     // Handle session end
                     session.addEventListener('end', () => {
@@ -690,53 +650,66 @@
             }
             
             // Start AR experience
-            async function startAR() {
-                hideError();
-                loader.style.display = 'flex';
-                
-                try {
-                    // First check if we have camera access
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    // Immediately stop the stream as we just needed permission
-                    stream.getTracks().forEach(track => track.stop());
-                    
-                    const arSupport = await checkARSupport();
-                    
-                    if (!arSupport) {
-                        showError("AR Not Supported", 
-                            "Your device or browser doesn't support AR features. " +
-                            "Please try on a newer Android device with Chrome or iOS device with Safari.");
-                        return;
-                    }
-                    
-                    let initialized = false;
-                    currentMode = arSupport;
-                    
-                    if (arSupport === 'webar') {
-                        initialized = await initWebAR();
-                    } 
-                    else if (arSupport === 'webxr') {
-                        initialized = await initWebXR();
-                    } 
-                    else if (arSupport === 'arjs') {
-                        initialized = await initARJS();
-                    }
-                    
-                    if (!initialized) {
-                        showError("Initialization Failed", 
-                            "AR features couldn't be initialized. " +
-                            "Please make sure you're in a well-lit environment and try again.");
-                    }
-                } catch (error) {
-                    if (error.name === 'NotAllowedError') {
-                        showError("Camera Access Denied", 
-                            "Please allow camera access to use AR features.");
-                    } else {
-                        showError("AR Error", 
-                            "An error occurred while starting AR: " + error.message);
-                    }
-                }
+           async function startAR() {
+    hideError();
+    loader.style.display = 'flex';
+    iosPermissionPanel.style.display = 'none'; // Hide iOS panel
+    
+    try {
+        // First check if we have camera access
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        
+        // For iOS, we need to stop the stream and let WebAR.rocks handle it
+        if (isIOS()) {
+            stream.getTracks().forEach(track => track.stop());
+            
+            // Small delay to ensure camera is properly released
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
+        
+        const arSupport = await checkARSupport();
+        
+        if (!arSupport) {
+            showError("AR Not Supported", 
+                "Your device or browser doesn't support AR features. " +
+                "Please try on a newer Android device with Chrome or iOS device with Safari.");
+            return;
+        }
+        
+        let initialized = false;
+        currentMode = arSupport;
+        
+        if (arSupport === 'webar') {
+            // For iOS, we need to recreate the WebAR.rocks instance after getting permissions
+            if (webarSlam) {
+                webarSlam.destroy();
+                webarSlam = null;
             }
+            
+            initialized = await initWebAR();
+        } 
+        else if (arSupport === 'webxr') {
+            initialized = await initWebXR();
+        } 
+        else if (arSupport === 'arjs') {
+            initialized = await initARJS();
+        }
+        
+        if (!initialized) {
+            showError("Initialization Failed", 
+                "AR features couldn't be initialized. " +
+                "Please make sure you're in a well-lit environment and try again.");
+        }
+    } catch (error) {
+        if (error.name === 'NotAllowedError') {
+            showError("Camera Access Denied", 
+                "Please allow camera access to use AR features.");
+        } else {
+            showError("AR Error", 
+                "An error occurred while starting AR: " + error.message);
+        }
+    }
+}
             
             // Handle tap to place
             function handleTap(event) {
