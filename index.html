@@ -226,7 +226,7 @@
     let hitTestCounter = 0;
     let lastStablePosition = null;
     let featurePoints = [];
-    let planeMeshes = [];
+    let planeMeshes = []; // Only declared once here
     let isSessionStarted = false;
     let xrSession = null;
     let hitTestSource = null;
@@ -234,126 +234,105 @@
     let referenceSpace = null;
     let lastHitTestPose = null;
     let lastStabilityUpdateTime = 0;
-    let planeMeshes = [];
     let detectedPlanes = new Set();
-    let featurePoints = [];
     let featurePointCloud = null;
 
     // Enhanced WebXR support check
-  async function checkXRSupport() {
-  // First check if WebXR is supported at all
-  if (!('xr' in navigator)) {
-    return false;
-  }
+    async function checkXRSupport() {
+      // First check if WebXR is supported at all
+      if (!('xr' in navigator)) {
+        return false;
+      }
 
-  // Check for immersive-ar support
-  try {
-    const supported = await navigator.xr.isSessionSupported('immersive-ar');
-    if (supported) return true;
-  } catch (e) {
-    console.error("WebXR support check error:", e);
-  }
+      // Check for immersive-ar support
+      try {
+        const supported = await navigator.xr.isSessionSupported('immersive-ar');
+        if (supported) return true;
+      } catch (e) {
+        console.error("WebXR support check error:", e);
+      }
 
-  // Android-specific checks
-  const isAndroid = /android/i.test(navigator.userAgent);
-  if (isAndroid) {
-    try {
-      // Check if ARCore is supported and installed
-      const arCoreSupported = await checkARCoreSupport();
-      return arCoreSupported;
-    } catch (e) {
-      console.error("ARCore check failed:", e);
+      // Android-specific checks
+      const isAndroid = /android/i.test(navigator.userAgent);
+      if (isAndroid) {
+        try {
+          // Check if ARCore is supported and installed
+          const arCoreSupported = await checkARCoreSupport();
+          return arCoreSupported;
+        } catch (e) {
+          console.error("ARCore check failed:", e);
+        }
+      }
+
+      return false;
     }
-  }
 
-  return false;
-}
-
-async function checkARCoreSupport() {
-  return new Promise((resolve) => {
-    if (window.ARCore) {
-      ARCore.getARAvailability().then((availability) => {
-        resolve(availability === 'SUPPORTED_INSTALLED');
-      }).catch(() => resolve(false));
-    } else {
-      // Fallback check for Chrome's WebXR AR support
-      const isChrome = /chrome|chromium|crios/i.test(navigator.userAgent);
-      const chromeVersionMatch = navigator.userAgent.match(/Chrome\/(\d+)/);
-      const chromeVersion = chromeVersionMatch ? parseInt(chromeVersionMatch[1]) : 0;
-      
-      // Chrome 81+ supports WebXR on Android with ARCore
-      resolve(isChrome && chromeVersion >= 81);
+    async function checkARCoreSupport() {
+      return new Promise((resolve) => {
+        if (window.ARCore) {
+          ARCore.getARAvailability().then((availability) => {
+            resolve(availability === 'SUPPORTED_INSTALLED');
+          }).catch(() => resolve(false));
+        } else {
+          // Fallback check for Chrome's WebXR AR support
+          const isChrome = /chrome|chromium|crios/i.test(navigator.userAgent);
+          const chromeVersionMatch = navigator.userAgent.match(/Chrome\/(\d+)/);
+          const chromeVersion = chromeVersionMatch ? parseInt(chromeVersionMatch[1]) : 0;
+          
+          // Chrome 81+ supports WebXR on Android with ARCore
+          resolve(isChrome && chromeVersion >= 81);
+        }
+      });
     }
-  });
-}
-
-async function checkARCoreSupport() {
-  // This is a more Android-specific check
-  return new Promise((resolve) => {
-    if (window.ARCore) {
-      ARCore.getARAvailability().then((availability) => {
-        resolve(availability === 'SUPPORTED_INSTALLED');
-      }).catch(() => resolve(false));
-    } else {
-      // Fallback check for Chrome's WebXR AR support
-      const isChrome = /chrome|chromium|crios/i.test(navigator.userAgent);
-      const chromeVersionMatch = navigator.userAgent.match(/Chrome\/(\d+)/);
-      const chromeVersion = chromeVersionMatch ? parseInt(chromeVersionMatch[1]) : 0;
-      
-      // Chrome 81+ supports WebXR on Android with ARCore
-      resolve(isChrome && chromeVersion >= 81);
-    }
-  });
-}
 
     // Check camera permissions with enhanced error handling
-  async function checkCameraPermissions() {
-  try {
-    // First check if permissions API is available
-    if (navigator.permissions && navigator.permissions.query) {
+    async function checkCameraPermissions() {
       try {
-        const permissionStatus = await navigator.permissions.query({ name: 'camera' });
-        if (permissionStatus.state === 'denied') {
-          return false;
+        // First check if permissions API is available
+        if (navigator.permissions && navigator.permissions.query) {
+          try {
+            const permissionStatus = await navigator.permissions.query({ name: 'camera' });
+            if (permissionStatus.state === 'denied') {
+              return false;
+            }
+          } catch (e) {
+            console.log("Permissions API not fully supported, proceeding...");
+          }
         }
-      } catch (e) {
-        console.log("Permissions API not fully supported, proceeding...");
-      }
-    }
 
-    // Android-specific device orientation permission
-    const isAndroid = /android/i.test(navigator.userAgent);
-    if (isAndroid && typeof DeviceOrientationEvent !== 'undefined' && 
-        typeof DeviceOrientationEvent.requestPermission === 'function') {
-      try {
-        const permission = await DeviceOrientationEvent.requestPermission();
-        if (permission !== 'granted') {
-          console.log("Device orientation permission denied");
-          return false;
+        // Android-specific device orientation permission
+        const isAndroid = /android/i.test(navigator.userAgent);
+        if (isAndroid && typeof DeviceOrientationEvent !== 'undefined' && 
+            typeof DeviceOrientationEvent.requestPermission === 'function') {
+          try {
+            const permission = await DeviceOrientationEvent.requestPermission();
+            if (permission !== 'granted') {
+              console.log("Device orientation permission denied");
+              return false;
+            }
+          } catch (e) {
+            console.error("Device orientation permission error:", e);
+            return false;
+          }
         }
+
+        // Test camera access with getUserMedia
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+        
+        // Immediately stop tracks to release camera
+        stream.getTracks().forEach(track => track.stop());
+        return true;
       } catch (e) {
-        console.error("Device orientation permission error:", e);
+        console.error("Camera permission error:", e);
         return false;
       }
     }
-
-    // Test camera access with getUserMedia
-    const stream = await navigator.mediaDevices.getUserMedia({ 
-      video: { 
-        facingMode: { ideal: 'environment' },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      }
-    });
-    
-    // Immediately stop tracks to release camera
-    stream.getTracks().forEach(track => track.stop());
-    return true;
-  } catch (e) {
-    console.error("Camera permission error:", e);
-    return false;
-  }
-}
 
     // Create advanced reticle with stability feedback
     function createReticle() {
@@ -521,37 +500,38 @@ async function checkARCoreSupport() {
         // Create advanced reticle
         reticle = createReticle();
         scene.add(reticle);
+        
         // Modify your createReticle function to add this:
-reticleGroup.userData = {
-  lastPositions: [],
-  addPosition: function(position) {
-    this.lastPositions.push({ position, time: performance.now() });
-    // Keep only recent positions
-    if (this.lastPositions.length > 10) {
-      this.lastPositions.shift();
-    }
-  },
-  getStability: function() {
-    if (this.lastPositions.length < 2) return 0;
-    
-    let totalMovement = 0;
-    for (let i = 1; i < this.lastPositions.length; i++) {
-      totalMovement += this.lastPositions[i].position.distanceTo(
-        this.lastPositions[i-1].position
-      );
-    }
-    
-    const avgMovement = totalMovement / (this.lastPositions.length - 1);
-    const timeSpan = this.lastPositions[this.lastPositions.length-1].time - 
-                    this.lastPositions[0].time;
-    
-    // Normalize movement to meters per second
-    const movementPerSecond = avgMovement / (timeSpan / 1000);
-    
-    // Convert to stability score (0-1)
-    return Math.max(0, 1 - (movementPerSecond / config.tracking.stability.movementThreshold));
-  }
-};
+        reticle.userData = {
+          lastPositions: [],
+          addPosition: function(position) {
+            this.lastPositions.push({ position, time: performance.now() });
+            // Keep only recent positions
+            if (this.lastPositions.length > 10) {
+              this.lastPositions.shift();
+            }
+          },
+          getStability: function() {
+            if (this.lastPositions.length < 2) return 0;
+            
+            let totalMovement = 0;
+            for (let i = 1; i < this.lastPositions.length; i++) {
+              totalMovement += this.lastPositions[i].position.distanceTo(
+                this.lastPositions[i-1].position
+              );
+            }
+            
+            const avgMovement = totalMovement / (this.lastPositions.length - 1);
+            const timeSpan = this.lastPositions[this.lastPositions.length-1].time - 
+                            this.lastPositions[0].time;
+            
+            // Normalize movement to meters per second
+            const movementPerSecond = avgMovement / (timeSpan / 1000);
+            
+            // Convert to stability score (0-1)
+            return Math.max(0, 1 - (movementPerSecond / 0.01)); // Using fixed threshold for movement
+          }
+        };
         
         // Create a group to hold the model for stable positioning
         modelGroup = new THREE.Group();
@@ -651,228 +631,12 @@ reticleGroup.userData = {
         fallbackToARJS();
       }
     }
-  async function initWebXR() {
-      try {
-        const hasPermission = await checkCameraPermissions();
-        if (!hasPermission) {
-          showCameraError();
-          return;
-        }
-
-        // Scene setup remains the same until after renderer creation
-        
-        // Add feature point visualization
-        const pointGeometry = new THREE.BufferGeometry();
-        const pointMaterial = new THREE.PointsMaterial({
-          color: 0xffffff,
-          size: 0.02,
-          transparent: true,
-          opacity: 0.8
-        });
-        featurePointCloud = new THREE.Points(pointGeometry, pointMaterial);
-        featurePointCloud.visible = config.debug; // Only show in debug mode
-        scene.add(featurePointCloud);
-
-        // Rest of your WebXR initialization until session creation
-        
-        xrSession = await navigator.xr.requestSession('immersive-ar', {
-          requiredFeatures: ['hit-test', 'dom-overlay'],
-          optionalFeatures: ['plane-detection', 'anchors', 'light-estimation', 'depth-sensing']
-        });
-        
-        // Add plane detection callback
-        xrSession.addEventListener('planesdetected', updatePlaneDetection);
-        
-        // Rest of your WebXR initialization
-      } catch (e) {
-        console.error("WebXR initialization failed:", e);
-        fallbackToARJS();
-      }
-    }
 
     // New function to handle plane detection updates
     function updatePlaneDetection(event) {
       if (!event.detectedPlanes) return;
 
-    // Set up hit test source for surface detection
-   // Replace the existing setupHitTestSource function with this improved version
-async function setupHitTestSource() {
-  if (!xrSession || !referenceSpace || hitTestSourceRequested) return;
-  
-  try {
-    // First try with the most accurate configuration
-    hitTestSource = await xrSession.requestHitTestSource({
-      space: referenceSpace,
-      entityTypes: ['plane', 'mesh'],
-      offsetRay: new XRRay(new DOMPoint(0, 0, 0), { 
-        direction: {x: 0, y: -1, z: 0, w: 1} // Pointing downward
-      })
-    });
-    
-    hitTestSourceRequested = true;
-    
-    // Add session end handler to clean up
-    xrSession.addEventListener('end', () => {
-      hitTestSourceRequested = false;
-      if (hitTestSource) {
-        hitTestSource.cancel();
-        hitTestSource = null;
-      }
-    });
-    
-    if (config.debug) {
-      console.log("Hit test source created successfully");
-    }
-  } catch (e) {
-    console.error("Failed to create hit test source:", e);
-    
-    // Fallback to simpler configuration
-    try {
-      hitTestSource = await xrSession.requestHitTestSource({
-        space: referenceSpace,
-        entityTypes: ['plane']
-      });
-      
-      hitTestSourceRequested = true;
-      
-      if (config.debug) {
-        console.log("Fallback hit test source created successfully");
-      }
-    } catch (e) {
-      console.error("Failed to create fallback hit test source:", e);
-      // Last resort - try without specifying entity types
-      try {
-        hitTestSource = await xrSession.requestHitTestSource({
-          space: referenceSpace
-        });
-        hitTestSourceRequested = true;
-      } catch (e) {
-        console.error("Completely failed to create hit test source:", e);
-      }
-    }
-  }
-}
-
-// Replace the render function with this improved version
-function render(timestamp, frame) {
-  if (!frame) return;
-  
-  // Get the XRViewerPose for the current frame
-  const pose = frame.getViewerPose(referenceSpace);
-  if (!pose) return;
-  
-  // Update camera position
-  camera.matrix.fromArray(pose.transform.matrix);
-  camera.matrix.decompose(camera.position, camera.quaternion, camera.scale);
-  camera.updateMatrixWorld(true);
-  
-  // Process hit test results if we have a hit test source
-  if (hitTestSource && !isModelPlaced) {
-    const hitTestResults = frame.getHitTestResults(hitTestSource);
-    
-    if (hitTestResults.length > 0) {
-      const hit = hitTestResults[0];
-      const hitPose = hit.getPose(referenceSpace);
-      
-      if (hitPose) {
-        reticle.visible = true;
-        reticle.matrix.fromArray(hitPose.transform.matrix);
-        
-        // Calculate stability metrics
-        const currentPosition = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
-        const currentTime = performance.now();
-        
-        if (lastStablePosition) {
-          // Calculate movement since last frame
-          const distanceMoved = lastStablePosition.distanceTo(currentPosition);
-          const timeElapsed = currentTime - lastStabilityUpdateTime;
-          
-          // Normalize movement based on time
-          const normalizedMovement = distanceMoved / Math.max(1, timeElapsed);
-          
-          // Update stability score (lower movement = higher stability)
-          stabilityScore = Math.max(0, Math.min(1, 
-            stabilityScore * 0.8 + (1 - Math.min(1, normalizedMovement * 10)) * 0.2
-          ));
-          
-          // Update reticle appearance
-          updateReticleStability(stabilityScore);
-          
-          // Update surface indicator
-          updateSurfaceIndicator(currentPosition);
-        }
-        
-        lastStablePosition = currentPosition.clone();
-        lastStabilityUpdateTime = currentTime;
-      }
-    } else {
-      reticle.visible = false;
-      stabilityScore = 0;
-      updateReticleStability(0);
-      document.getElementById('surface-indicator').style.display = 'none';
-    }
-  }
-  
-  // Render the scene
-  renderer.render(scene, camera);
-}
-
-// Improved surface indicator update
-function updateSurfaceIndicator(position) {
-  const indicator = document.getElementById('surface-indicator');
-  if (!indicator) return;
-  
-  // Convert 3D position to 2D screen coordinates
-  const vector = position.clone().project(camera);
-  
-  const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-  const y = -(vector.y * 0.5 - 0.5) * window.innerHeight;
-  
-  // Only show if position is in front of camera
-  if (vector.z > 0 && vector.z <= 1) {
-    indicator.style.left = `${x - 20}px`;
-    indicator.style.top = `${y - 20}px`;
-    indicator.style.display = 'block';
-    
-    // Add pulse animation based on stability
-    const pulseScale = 0.8 + (0.4 * stabilityScore);
-    indicator.style.transform = `scale(${pulseScale})`;
-    indicator.style.opacity = stabilityScore;
-  } else {
-    indicator.style.display = 'none';
-  }
-}
-async function initWebXR() {
-  // ... previous session creation code ...
-  
-  try {
-    xrSession = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['hit-test']
-    });
-    
-    // Only add event listener after session is created
-    xrSession.addEventListener('inputsourceschange', (event) => {
-      // Re-request hit test source if we lost it
-      if (!hitTestSource && hitTestSourceRequested) {
-        setupHitTestSource();
-      }
-    });
-    
-    // ... rest of your initialization code ...
-  } catch (error) {
-    console.error('Error starting AR session:', error);
-  }
-}
-    // Add this to your config:
-    const tracking = {
-  // ... existing config ...
-  stability: {
-    movementThreshold: 0.01, // meters per second
-    timeWindow: 300,         // milliseconds
-    requiredStableFrames: 10
-  }
-};
- for (const plane of event.detectedPlanes) {
+      for (const plane of event.detectedPlanes) {
         if (!detectedPlanes.has(plane.uuid)) {
           createPlaneMesh(plane);
           detectedPlanes.add(plane.uuid);
@@ -948,47 +712,155 @@ async function initWebXR() {
       featurePointCloud.geometry.attributes.position.needsUpdate = true;
     }
 
-    // Updated render function to include plane visualization
-    function render(timestamp, frame) {
-      if (!frame) return;
+    // Replace the existing setupHitTestSource function with this improved version
+    async function setupHitTestSource() {
+      if (!xrSession || !referenceSpace || hitTestSourceRequested) return;
       
-      // Process detected planes if available
-      if (frame.detectedPlanes) {
-        for (const plane of frame.detectedPlanes) {
-          const planeMesh = planeMeshes.find(m => m.userData.plane.uuid === plane.uuid);
-          if (planeMesh) {
-            planeMesh.matrix.fromArray(plane.pose.transform.matrix);
-            planeMesh.visible = true;
-            
-            // Update plane extent if changed
-            if (plane.extent) {
-              planeMesh.geometry.dispose();
-              planeMesh.geometry = new THREE.PlaneGeometry(plane.extent.width, plane.extent.height);
-            }
+      try {
+        // First try with the most accurate configuration
+        hitTestSource = await xrSession.requestHitTestSource({
+          space: referenceSpace,
+          entityTypes: ['plane', 'mesh'],
+          offsetRay: new XRRay(new DOMPoint(0, 0, 0), { 
+            direction: {x: 0, y: -1, z: 0, w: 1} // Pointing downward
+          })
+        });
+        
+        hitTestSourceRequested = true;
+        
+        // Add session end handler to clean up
+        xrSession.addEventListener('end', () => {
+          hitTestSourceRequested = false;
+          if (hitTestSource) {
+            hitTestSource.cancel();
+            hitTestSource = null;
+          }
+        });
+        
+        if (config.debug) {
+          console.log("Hit test source created successfully");
+        }
+      } catch (e) {
+        console.error("Failed to create hit test source:", e);
+        
+        // Fallback to simpler configuration
+        try {
+          hitTestSource = await xrSession.requestHitTestSource({
+            space: referenceSpace,
+            entityTypes: ['plane']
+          });
+          
+          hitTestSourceRequested = true;
+          
+          if (config.debug) {
+            console.log("Fallback hit test source created successfully");
+          }
+        } catch (e) {
+          console.error("Failed to create fallback hit test source:", e);
+          // Last resort - try without specifying entity types
+          try {
+            hitTestSource = await xrSession.requestHitTestSource({
+              space: referenceSpace
+            });
+            hitTestSourceRequested = true;
+          } catch (e) {
+            console.error("Completely failed to create hit test source:", e);
           }
         }
       }
-      
-      // Process feature points if available
-      if (frame.detectedFeaturePoints && config.debug) {
-        const points = frame.detectedFeaturePoints.points;
-        const positions = new Float32Array(points.length * 3);
-        
-        for (let i = 0; i < points.length; i++) {
-          positions[i * 3] = points[i].x;
-          positions[i * 3 + 1] = points[i].y;
-          positions[i * 3 + 2] = points[i].z;
-        }
-        
-        featurePointCloud.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        featurePointCloud.geometry.attributes.position.needsUpdate = true;
-        featurePointCloud.visible = true;
-      }
-      
-      // Rest of your render function remains the same
     }
 
-    // Updated AR.js initialization for better plane detection
+    // Replace the render function with this improved version
+    function render(timestamp, frame) {
+      if (!frame) return;
+      
+      // Get the XRViewerPose for the current frame
+      const pose = frame.getViewerPose(referenceSpace);
+      if (!pose) return;
+      
+      // Update camera position
+      camera.matrix.fromArray(pose.transform.matrix);
+      camera.matrix.decompose(camera.position, camera.quaternion, camera.scale);
+      camera.updateMatrixWorld(true);
+      
+      // Process hit test results if we have a hit test source
+      if (hitTestSource && !isModelPlaced) {
+        const hitTestResults = frame.getHitTestResults(hitTestSource);
+        
+        if (hitTestResults.length > 0) {
+          const hit = hitTestResults[0];
+          const hitPose = hit.getPose(referenceSpace);
+          
+          if (hitPose) {
+            reticle.visible = true;
+            reticle.matrix.fromArray(hitPose.transform.matrix);
+            
+            // Calculate stability metrics
+            const currentPosition = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
+            const currentTime = performance.now();
+            
+            if (lastStablePosition) {
+              // Calculate movement since last frame
+              const distanceMoved = lastStablePosition.distanceTo(currentPosition);
+              const timeElapsed = currentTime - lastStabilityUpdateTime;
+              
+              // Normalize movement based on time
+              const normalizedMovement = distanceMoved / Math.max(1, timeElapsed);
+              
+              // Update stability score (lower movement = higher stability)
+              stabilityScore = Math.max(0, Math.min(1, 
+                stabilityScore * 0.8 + (1 - Math.min(1, normalizedMovement * 10)) * 0.2
+              ));
+              
+              // Update reticle appearance
+              updateReticleStability(stabilityScore);
+              
+              // Update surface indicator
+              updateSurfaceIndicator(currentPosition);
+            }
+            
+            lastStablePosition = currentPosition.clone();
+            lastStabilityUpdateTime = currentTime;
+          }
+        } else {
+          reticle.visible = false;
+          stabilityScore = 0;
+          updateReticleStability(0);
+          document.getElementById('surface-indicator').style.display = 'none';
+        }
+      }
+      
+      // Render the scene
+      renderer.render(scene, camera);
+    }
+
+    // Improved surface indicator update
+    function updateSurfaceIndicator(position) {
+      const indicator = document.getElementById('surface-indicator');
+      if (!indicator) return;
+      
+      // Convert 3D position to 2D screen coordinates
+      const vector = position.clone().project(camera);
+      
+      const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+      const y = -(vector.y * 0.5 - 0.5) * window.innerHeight;
+      
+      // Only show if position is in front of camera
+      if (vector.z > 0 && vector.z <= 1) {
+        indicator.style.left = `${x - 20}px`;
+        indicator.style.top = `${y - 20}px`;
+        indicator.style.display = 'block';
+        
+        // Add pulse animation based on stability
+        const pulseScale = 0.8 + (0.4 * stabilityScore);
+        indicator.style.transform = `scale(${pulseScale})`;
+        indicator.style.opacity = stabilityScore;
+      } else {
+        indicator.style.display = 'none';
+      }
+    }
+
+    // Initialize AR.js fallback mode with enhanced features
     async function initARJS() {
       try {
         const hasPermission = await checkCameraPermissions();
@@ -1032,271 +904,62 @@ async function initWebXR() {
           '<p class="unsupported">Failed to initialize AR. Your device may not support AR features.</p>';
       }
     }
+
     function setupAndroidSpecificUI() {
-  const isAndroid = /android/i.test(navigator.userAgent);
-  if (isAndroid) {
-    // Adjust UI elements for Android
-    document.getElementById('info').style.fontSize = '16px';
-    document.getElementById('gesture-help').style.bottom = '80px';
-    
-    // Add Android-specific instructions
-    const androidHelp = document.createElement('div');
-    androidHelp.id = 'android-help';
-    androidHelp.style.position = 'fixed';
-    androidHelp.style.bottom = '120px';
-    androidHelp.style.left = '0';
-    androidHelp.style.right = '0';
-    androidHelp.style.textAlign = 'center';
-    androidHelp.style.color = 'white';
-    androidHelp.style.backgroundColor = 'rgba(0,0,0,0.7)';
-    androidHelp.style.padding = '10px';
-    androidHelp.style.borderRadius = '5px';
-    androidHelp.innerHTML = 'On Android: Move device slowly to detect surfaces';
-    document.body.appendChild(androidHelp);
-  }
-}
-    function logError(error) {
-  console.error(error);
-  if (config.debug) {
-    const errorDisplay = document.getElementById('error-display') || 
-      document.createElement('div');
-    errorDisplay.id = 'error-display';
-    errorDisplay.style.position = 'fixed';
-    errorDisplay.style.top = '0';
-    errorDisplay.style.left = '0';
-    errorDisplay.style.color = 'red';
-    errorDisplay.style.backgroundColor = 'rgba(0,0,0,0.7)';
-    errorDisplay.style.padding = '10px';
-    errorDisplay.style.zIndex = '1000';
-    errorDisplay.textContent = `Error: ${error.message || error}`;
-    document.body.appendChild(errorDisplay);
-  }
-}
-    async function startARExperience() {
-  try {
-    // First try WebXR
-    await initWebXR();
-  } catch (e) {
-    console.log("WebXR failed, trying AR.js");
-    try {
-      await initARJS();
-    } catch (e2) {
-      console.log("AR.js failed, showing fallback");
-      showUnsupportedMessage();
-    }
-  }
-}
-
-    // Initialize AR.js fallback mode with enhanced features
-    async function initARJS() {
-      try {
-        const hasPermission = await checkCameraPermissions();
-        if (!hasPermission) {
-          showCameraError();
-          return;
-        }
-
-        document.getElementById('ar-container').innerHTML = `
-          <a-scene 
-            vr-mode-ui="enabled: false"
-            arjs="sourceType: webcam; 
-                  detectionMode: mono_and_matrix; 
-                  matrixCodeType: 3x3;
-                  debugUIEnabled: false;
-                  maxDetectionRate: 30;
-                  cameraParametersUrl: https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/data/camera_para.dat"
-            renderer="logarithmicDepthBuffer: true; precision: high; alpha: true"
-            embedded
-            cursor="rayOrigin: mouse; fuse: false"
-            raycaster="objects: .clickable">
-            
-            <a-camera gps-camera rotation-reader></a-camera>
-            
-            <!-- Enhanced surface detection with multiple planes -->
-            <a-entity id="surface-plane" 
-                     geometry="primitive: plane; width: 100; height: 100" 
-                     material="visible: false; shader: flat"
-                     rotation="-90 0 0" 
-                     class="clickable">
-            </a-entity>
-            
-            <!-- Model with shadow -->
-            <a-entity id="model" 
-                     gltf-model="${config.modelUrl}" 
-                     visible="false"
-                     shadow="cast: true; receive: true">
-            </a-entity>
-            
-            <!-- Enhanced AR.js reticle with stability feedback -->
-            <a-entity id="arjs-reticle" visible="false">
-              <a-ring color="white" 
-                     radius-inner="${config.reticle.ringRadius}" 
-                     radius-outer="${config.reticle.ringRadius + config.reticle.ringThickness}" 
-                     opacity="${config.reticle.opacity}" 
-                     rotation="-90 0 0">
-              </a-ring>
-              <a-circle color="white" 
-                       radius="${config.reticle.circleRadius}" 
-                       opacity="${config.reticle.opacity}" 
-                       rotation="-90 0 0">
-              </a-circle>
-              <a-grid material="wireframe: true; color: white; opacity: ${config.reticle.gridOpacity}" 
-                     width="${config.reticle.gridSize}" 
-                     height="${config.reticle.gridSize}" 
-                     rotation="-90 0 0">
-              </a-grid>
-            </a-entity>
-            
-            <!-- Lighting for better model appearance -->
-            <a-light type="ambient" color="#ffffff" intensity="0.8"></a-light>
-            <a-light type="directional" color="#ffffff" intensity="0.8" position="0.5 1 0.25" cast-shadow></a-light>
-          </a-scene>
-        `;
+      const isAndroid = /android/i.test(navigator.userAgent);
+      if (isAndroid) {
+        // Adjust UI elements for Android
+        document.getElementById('info').style.fontSize = '16px';
+        document.getElementById('gesture-help').style.bottom = '80px';
         
-        arjsScene = document.querySelector('a-scene');
-        const modelEl = document.getElementById('model');
-        const reticleEl = document.getElementById('arjs-reticle');
-        const surfacePlaneEl = document.getElementById('surface-plane');
-        
-        arjsScene.addEventListener('loaded', () => {
-          document.getElementById('loading').style.display = 'none';
-          document.getElementById('gesture-help').style.display = 'block';
-          document.getElementById('stability-meter').style.display = 'block';
-          
-          // Wait for model to load to apply proper scaling
-          modelEl.addEventListener('model-loaded', () => {
-            const modelObject = modelEl.object3D;
-            const box = new THREE.Box3().setFromObject(modelObject);
-            const size = box.getSize(new THREE.Vector3());
-            const maxDim = Math.max(size.x, size.y, size.z);
-            const targetSize = 1.0;
-            const scaleFactor = targetSize / maxDim;
-            
-            modelEl.setAttribute('scale', {
-              x: scaleFactor,
-              y: scaleFactor,
-              z: scaleFactor
-            });
-            
-            if (config.debug) {
-              console.log(`AR.js model scaled with factor: ${scaleFactor.toFixed(2)}`);
-              // Add bounding box helper for debugging
-              const bboxHelper = new THREE.Box3Helper(box, 0xffff00);
-              bboxHelper.visible = false;
-              modelObject.add(bboxHelper);
-            }
-          });
-          
-          // Enhanced surface detection with stability tracking
-          let lastIntersectionTime = 0;
-          let lastIntersectionPoint = null;
-          let stabilityScore = 0;
-          
-          // Place model on surface click
-          arjsScene.addEventListener('click', (e) => {
-            if (!isModelPlaced && e.detail.intersection && 
-                e.detail.intersection.object.el === surfacePlaneEl) {
-              
-              // Only place if stability is high enough
-              if (stabilityScore > 0.7) {
-                placeModelARJS(e.detail.intersection.point);
-                reticleEl.setAttribute('visible', 'false');
-              }
-            }
-          });
-          
-          // Show reticle when intersecting with surface
-          arjsScene.addEventListener('mouseenter', (e) => {
-            if (!isModelPlaced && e.detail.intersection && 
-                e.detail.intersection.object.el === surfacePlaneEl) {
-              
-              const now = Date.now();
-              const intersectionPoint = e.detail.intersection.point;
-              
-              // Calculate stability based on how much the intersection point has moved
-              if (lastIntersectionPoint) {
-                const distanceMoved = lastIntersectionPoint.distanceTo(intersectionPoint);
-                const timeDiff = now - lastIntersectionTime;
-                
-                // Stability increases when movement is small and time difference is small
-                const movementFactor = Math.max(0, 1 - distanceMoved * 10);
-                const timeFactor = Math.min(1, timeDiff / 100);
-                stabilityScore = Math.min(1, stabilityScore * 0.9 + movementFactor * timeFactor * 0.1);
-                
-                // Update stability UI
-                document.getElementById('stability-progress').style.width = `${stabilityScore * 100}%`;
-                
-                // Update reticle color based on stability
-                const color = new THREE.Color().lerpColors(
-                  new THREE.Color(config.reticle.unstableColor),
-                  new THREE.Color(config.reticle.stableColor),
-                  stabilityScore
-                );
-                
-                const colorHex = `#${color.getHexString()}`;
-                reticleEl.setAttribute('color', colorHex);
-                reticleEl.querySelector('a-ring').setAttribute('color', colorHex);
-                reticleEl.querySelector('a-circle').setAttribute('color', colorHex);
-                reticleEl.querySelector('a-grid').setAttribute('color', colorHex);
-              }
-              
-              lastIntersectionPoint = intersectionPoint.clone();
-              lastIntersectionTime = now;
-              
-              reticleEl.setAttribute('visible', 'true');
-              reticleEl.setAttribute('position', intersectionPoint);
-              
-              // Update surface indicator
-              updateARJSSurfaceIndicator(intersectionPoint);
-            }
-          });
-          
-          // Hide reticle when not intersecting with surface
-          arjsScene.addEventListener('mouseleave', (e) => {
-            if (!isModelPlaced) {
-              reticleEl.setAttribute('visible', 'false');
-              document.getElementById('surface-indicator').style.display = 'none';
-              stabilityScore = 0;
-              document.getElementById('stability-progress').style.width = '0%';
-            }
-          });
-          
-          // Set up gesture controls after model is placed
-          setupARJSGestureControls(modelEl);
-        });
-      } catch (e) {
-        console.error("AR.js initialization failed:", e);
-        document.getElementById('support-message').innerHTML = 
-          '<p class="unsupported">Failed to initialize AR. Your device may not support AR features.</p>';
+        // Add Android-specific instructions
+        const androidHelp = document.createElement('div');
+        androidHelp.id = 'android-help';
+        androidHelp.style.position = 'fixed';
+        androidHelp.style.bottom = '120px';
+        androidHelp.style.left = '0';
+        androidHelp.style.right = '0';
+        androidHelp.style.textAlign = 'center';
+        androidHelp.style.color = 'white';
+        androidHelp.style.backgroundColor = 'rgba(0,0,0,0.7)';
+        androidHelp.style.padding = '10px';
+        androidHelp.style.borderRadius = '5px';
+        androidHelp.innerHTML = 'On Android: Move device slowly to detect surfaces';
+        document.body.appendChild(androidHelp);
       }
     }
 
-    // Update surface indicator for AR.js
-    function updateARJSSurfaceIndicator(position) {
-      const indicator = document.getElementById('surface-indicator');
-      if (!indicator) return;
-      
-      // Convert world position to screen coordinates
-      const cameraEl = arjsScene.camera;
-      const camera = cameraEl.object3D;
-      const vector = new THREE.Vector3(
-        position.x,
-        position.y,
-        position.z
-      );
-      
-      vector.project(camera);
-      
-      const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-      const y = -(vector.y * 0.5 - 0.5) * window.innerHeight;
-      
-      indicator.style.left = `${x - 20}px`;
-      indicator.style.top = `${y - 20}px`;
-      indicator.style.display = 'block';
-      
-      // Add pulse animation based on stability
-      const pulseScale = 1 + (0.2 * (1 - stabilityScore));
-      indicator.style.transform = `scale(${pulseScale})`;
+    function logError(error) {
+      console.error(error);
+      if (config.debug) {
+        const errorDisplay = document.getElementById('error-display') || 
+          document.createElement('div');
+        errorDisplay.id = 'error-display';
+        errorDisplay.style.position = 'fixed';
+        errorDisplay.style.top = '0';
+        errorDisplay.style.left = '0';
+        errorDisplay.style.color = 'red';
+        errorDisplay.style.backgroundColor = 'rgba(0,0,0,0.7)';
+        errorDisplay.style.padding = '10px';
+        errorDisplay.style.zIndex = '1000';
+        errorDisplay.textContent = `Error: ${error.message || error}`;
+        document.body.appendChild(errorDisplay);
+      }
+    }
+
+    async function startARExperience() {
+      try {
+        // First try WebXR
+        await initWebXR();
+      } catch (e) {
+        console.log("WebXR failed, trying AR.js");
+        try {
+          await initARJS();
+        } catch (e2) {
+          console.log("AR.js failed, showing fallback");
+          showUnsupportedMessage();
+        }
+      }
     }
 
     // Place model in WebXR mode with enhanced anchoring
@@ -1343,7 +1006,7 @@ async function initWebXR() {
           // Fallback to non-anchored placement
           modelGroup.position.setFromMatrixPosition(reticle.matrix);
           modelGroup.quaternion.setFromRotationMatrix(reticle.matrix);
-          model.visible = true;
+          model.visible = true
           isModelPlaced = true;
         }
       }
