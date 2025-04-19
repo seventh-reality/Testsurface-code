@@ -2,11 +2,16 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>WebXR SLAM with Three.js</title>
+    <title>WebXR AR with Three.js</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; }
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background: #000;
+        }
         #info {
             position: absolute;
             bottom: 20px;
@@ -17,97 +22,160 @@
             font-family: Arial;
             background: rgba(0,0,0,0.5);
             padding: 10px;
+            z-index: 100;
+        }
+        #startButton {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            z-index: 100;
+        }
+        #unsupported {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            text-align: center;
+            font-family: Arial;
+            display: none;
         }
     </style>
 </head>
 <body>
+    <button id="startButton">Start AR</button>
     <div id="info">Move your device to detect surfaces. Tap to place object.</div>
+    <div id="unsupported">Your device doesn't support AR features</div>
     
     <script>
         let scene, camera, renderer, model;
         let hitTestSource = null;
         let modelPlaced = false;
+        let referenceSpace = null;
+        let xrSession = null;
 
         init();
-        animate();
 
         async function init() {
+            // Check for WebXR support
+            if (!navigator.xr) {
+                showUnsupported();
+                return;
+            }
+
+            // Initialize Three.js
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
             
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true, 
+                alpha: true,
+                preserveDrawingBuffer: true // Needed for iOS
+            });
             renderer.xr.enabled = true;
+            renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.outputEncoding = THREE.sRGBEncoding;
             document.body.appendChild(renderer.domElement);
             
-            // Load 3D model
-            const loader = new THREE.GLTFLoader();
-            const gltf = await loader.loadAsync('all.glb');
-            model = gltf.scene;
-            model.scale.set(0.5, 0.5, 0.5);
-            model.visible = false;
-            scene.add(model);
-            
-            // Enable WebXR
-            if (navigator.xr) {
-                const supported = await navigator.xr.isSessionSupported('immersive-ar');
-                if (supported) {
-                    const button = document.createElement('button');
-                    button.textContent = 'Start AR';
-                    button.style.position = 'absolute';
-                    button.style.top = '10px';
-                    button.style.left = '10px';
-                    button.style.zIndex = '999';
-                    button.addEventListener('click', startAR);
-                    document.body.appendChild(button);
-                } else {
-                    document.getElementById('info').textContent = 'AR not supported on this device.';
-                }
-            } else {
-                document.getElementById('info').textContent = 'WebXR not available. Use Chrome or Safari.';
+            try {
+                // Load 3D model
+                const loader = new THREE.GLTFLoader();
+                const gltf = await loader.loadAsync('all.glb');
+                model = gltf.scene;
+                model.scale.set(0.5, 0.5, 0.5);
+                model.visible = false;
+                scene.add(model);
+            } catch (error) {
+                console.error("Error loading model:", error);
+                document.getElementById('info').textContent = "Error loading 3D model";
+                return;
             }
             
-            window.addEventListener('resize', () => {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-            });
+            // Check AR support
+            const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
+            if (!isARSupported) {
+                showUnsupported();
+                return;
+            }
             
-            window.addEventListener('click', () => {
-                if (!modelPlaced && hitTestSource) {
-                    modelPlaced = true;
-                    model.visible = true;
-                    document.getElementById('info').style.display = 'none';
-                }
-            });
+            // Set up event listeners
+            document.getElementById('startButton').addEventListener('click', startAR);
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('click', onTap);
+        }
+
+        function showUnsupported() {
+            document.getElementById('unsupported').style.display = 'block';
+            document.getElementById('startButton').style.display = 'none';
+            document.getElementById('info').style.display = 'none';
         }
 
         async function startAR() {
-            const session = await navigator.xr.requestSession('immersive-ar');
-            session.updateRenderState({
-                baseLayer: new XRWebGLLayer(session, renderer.context)
-            });
-            
-            session.addEventListener('end', () => {
-                model.visible = false;
-                modelPlaced = false;
+            try {
+                // Request AR session
+                xrSession = await navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['hit-test', 'dom-overlay'],
+                    domOverlay: { root: document.body }
+                });
+                
+                // Set up session events
+                xrSession.addEventListener('end', onSessionEnded);
+                
+                // Update render state
+                await xrSession.updateRenderState({
+                    baseLayer: new XRWebGLLayer(xrSession, renderer.context)
+                });
+                
+                // Get reference space
+                referenceSpace = await xrSession.requestReferenceSpace('local');
+                
+                // Create hit test source
+                hitTestSource = await xrSession.requestHitTestSource({
+                    space: referenceSpace
+                });
+                
+                // Start Three.js XR session
+                renderer.xr.setSession(xrSession);
+                
+                // Hide button and show info
+                document.getElementById('startButton').style.display = 'none';
                 document.getElementById('info').style.display = 'block';
-            });
-            
-            const referenceSpace = await session.requestReferenceSpace('local');
-            hitTestSource = await session.requestHitTestSource({ space: referenceSpace });
-            
-            renderer.xr.setSession(session);
+                
+                // Start animation loop
+                renderer.setAnimationLoop(onXRFrame);
+            } catch (error) {
+                console.error("AR session failed:", error);
+                document.getElementById('info').textContent = "Failed to start AR. Try again.";
+            }
         }
 
-        function animate() {
-            requestAnimationFrame(animate);
+        function onSessionEnded() {
+            if (xrSession) {
+                xrSession.removeEventListener('end', onSessionEnded);
+                xrSession = null;
+            }
             
-            if (renderer.xr.isPresenting && hitTestSource) {
-                const frame = renderer.xr.getFrame();
+            model.visible = false;
+            modelPlaced = false;
+            document.getElementById('startButton').style.display = 'block';
+            document.getElementById('info').style.display = 'none';
+            renderer.setAnimationLoop(null);
+        }
+
+        function onXRFrame(time, frame) {
+            if (!frame) return;
+            
+            if (hitTestSource && !modelPlaced) {
                 const hitTestResults = frame.getHitTestResults(hitTestSource);
-                
-                if (hitTestResults.length > 0 && !modelPlaced) {
+                if (hitTestResults.length > 0) {
                     const pose = hitTestResults[0].getPose(referenceSpace);
                     model.position.set(
                         pose.transform.position.x,
@@ -124,6 +192,20 @@
             }
             
             renderer.render(scene, camera);
+        }
+
+        function onTap() {
+            if (xrSession && !modelPlaced && model) {
+                model.visible = true;
+                modelPlaced = true;
+                document.getElementById('info').style.display = 'none';
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
         }
     </script>
 </body>
