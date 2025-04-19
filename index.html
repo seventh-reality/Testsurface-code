@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/webxr/XRControllerModelFactory.min.js"></script>
     <style>
         body { 
             margin: 0; 
@@ -100,8 +101,13 @@
             }
             
             // Check AR support
-            const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
-            if (!isARSupported) {
+            try {
+                const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
+                if (!isARSupported) {
+                    showUnsupported();
+                    return;
+                }
+            } catch (e) {
                 showUnsupported();
                 return;
             }
@@ -120,9 +126,10 @@
 
         async function startAR() {
             try {
-                // Request AR session
+                // Request AR session with proper options
                 xrSession = await navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['hit-test', 'dom-overlay'],
+                    requiredFeatures: ['hit-test'],
+                    optionalFeatures: ['dom-overlay'],
                     domOverlay: { root: document.body }
                 });
                 
@@ -134,16 +141,18 @@
                     baseLayer: new XRWebGLLayer(xrSession, renderer.context)
                 });
                 
-                // Get reference space
-                referenceSpace = await xrSession.requestReferenceSpace('local');
+                // Get reference space - using 'viewer' for hit-testing
+                referenceSpace = await xrSession.requestReferenceSpace('viewer');
                 
                 // Create hit test source
+                const space = await xrSession.requestReferenceSpace('local');
                 hitTestSource = await xrSession.requestHitTestSource({
-                    space: referenceSpace
+                    space: space,
+                    entityTypes: ['plane', 'mesh']
                 });
                 
                 // Start Three.js XR session
-                renderer.xr.setSession(xrSession);
+                await renderer.xr.setSession(xrSession);
                 
                 // Hide button and show info
                 document.getElementById('startButton').style.display = 'none';
@@ -153,7 +162,9 @@
                 renderer.setAnimationLoop(onXRFrame);
             } catch (error) {
                 console.error("AR session failed:", error);
-                document.getElementById('info').textContent = "Failed to start AR. Try again.";
+                document.getElementById('info').textContent = "Failed to start AR: " + error.message;
+                // Show button again to allow retry
+                document.getElementById('startButton').style.display = 'block';
             }
         }
 
@@ -163,7 +174,9 @@
                 xrSession = null;
             }
             
-            model.visible = false;
+            if (model) {
+                model.visible = false;
+            }
             modelPlaced = false;
             document.getElementById('startButton').style.display = 'block';
             document.getElementById('info').style.display = 'none';
@@ -171,12 +184,12 @@
         }
 
         function onXRFrame(time, frame) {
-            if (!frame) return;
+            if (!frame || !hitTestSource || modelPlaced) return;
             
-            if (hitTestSource && !modelPlaced) {
-                const hitTestResults = frame.getHitTestResults(hitTestSource);
-                if (hitTestResults.length > 0) {
-                    const pose = hitTestResults[0].getPose(referenceSpace);
+            const hitTestResults = frame.getHitTestResults(hitTestSource);
+            if (hitTestResults.length > 0) {
+                const pose = hitTestResults[0].getPose(referenceSpace);
+                if (pose && model) {
                     model.position.set(
                         pose.transform.position.x,
                         pose.transform.position.y,
@@ -188,6 +201,7 @@
                         pose.transform.orientation.z,
                         pose.transform.orientation.w
                     );
+                    model.visible = true;
                 }
             }
             
@@ -196,7 +210,6 @@
 
         function onTap() {
             if (xrSession && !modelPlaced && model) {
-                model.visible = true;
                 modelPlaced = true;
                 document.getElementById('info').style.display = 'none';
             }
