@@ -2,734 +2,196 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>Advanced Markerless AR with SLAM & World Tracking</title>
-    
-    <!-- Required Libraries -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/aframe@1.2.0/dist/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/WebAR-rocks/webar.rocks.three@latest/dist/webar.rocks.three.min.js"></script>
-    
+    <title>WebAR Surface Tracking with Three.js</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
     <style>
         body {
             margin: 0;
-            padding: 0;
             overflow: hidden;
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-            -webkit-touch-callout: none;
-            -webkit-user-select: none;
         }
-        
-        /* AR View Containers */
-        #webar-view, #arjs-view, #aframe-view {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            display: none;
-        }
-        
-        /* UI Elements */
-        .ar-ui-panel {
+        #info {
             position: absolute;
             bottom: 20px;
-            width: 100%;
+            left: 0;
+            right: 0;
             text-align: center;
-            z-index: 100;
             color: white;
-            text-shadow: 0 0 5px black;
-            pointer-events: none;
+            font-family: Arial, sans-serif;
+            background-color: rgba(0,0,0,0.5);
+            padding: 10px;
+            z-index: 999;
         }
-        
-        .ar-controls {
+        #loading {
             position: absolute;
-            top: 20px;
-            right: 20px;
-            z-index: 100;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-        
-        .ar-btn {
-            padding: 10px 15px;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            border: 1px solid white;
-            border-radius: 5px;
-            cursor: pointer;
-            pointer-events: auto;
-            font-size: 14px;
-        }
-        
-        .ar-btn:hover {
-            background: rgba(255,255,255,0.2);
-        }
-        
-        .ar-surface-marker {
-            position: absolute;
-            width: 40px;
-            height: 40px;
-            border: 2px solid cyan;
-            border-radius: 50%;
+            top: 50%;
+            left: 50%;
             transform: translate(-50%, -50%);
-            pointer-events: none;
-            z-index: 99;
-            display: none;
-        }
-        
-        .loader {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.8);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
             color: white;
-            z-index: 1000;
-        }
-        
-        .spinner {
-            width: 40px;
-            height: 40px;
-            border: 4px solid rgba(255,255,255,0.3);
-            border-radius: 50%;
-            border-top: 4px solid white;
-            animation: spin 1s linear infinite;
-            margin-bottom: 20px;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .error-panel {
-            display: none;
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.9);
-            color: white;
-            z-index: 1001;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
+            font-family: Arial, sans-serif;
+            background-color: rgba(0,0,0,0.7);
             padding: 20px;
-            text-align: center;
-        }
-        
-        .model-selector {
-            position: absolute;
-            bottom: 80px;
-            width: 100%;
-            display: flex;
-            justify-content: center;
-            gap: 10px;
-            z-index: 100;
-        }
-        
-        .model-btn {
-            padding: 8px 12px;
-            background: rgba(76, 175, 80, 0.7);
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            pointer-events: auto;
+            border-radius: 10px;
+            z-index: 999;
         }
     </style>
 </head>
 <body>
-    <!-- Loader Screen -->
-    <div class="loader">
-        <div class="spinner"></div>
-        <div id="loader-text">Initializing AR Environment...</div>
-    </div>
+    <div id="info">Move your device to detect surfaces. Tap to place the 3D model.</div>
+    <div id="loading">Loading AR experience...</div>
     
-    <!-- Error Panel -->
-    <div class="error-panel">
-        <h2 id="error-title">AR Not Available</h2>
-        <p id="error-message"></p>
-        <button class="ar-btn" id="retry-btn">Try Again</button>
-    </div>
-    
-    <!-- WebAR.rocks SLAM View -->
-    <div id="webar-view">
-        <canvas id="webar-canvas"></canvas>
-        <div class="ar-surface-marker" id="webar-marker"></div>
-    </div>
-    
-    <!-- AR.js View -->
-    <div id="arjs-view"></div>
-    
-    <!-- A-Frame View -->
-    <div id="aframe-view"></div>
-    
-    <!-- Common UI Elements -->
-    <div class="ar-ui-panel" id="placement-ui">
-        Point your camera at a flat surface and tap to place object
-    </div>
-    
-    <div class="model-selector" id="model-selector">
-        <button class="model-btn" data-model="box">Box</button>
-        <button class="model-btn" data-model="duck">Duck</button>
-        <button class="model-btn" data-model="helmet">Helmet</button>
-    </div>
-    
-    <div class="ar-controls">
-        <button class="ar-btn" id="switch-ar-btn">Switch AR Mode</button>
-        <button class="ar-btn" id="reset-btn">Reset Scene</button>
-    </div>
+    <!-- Include Three.js -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <!-- Include GLTF loader -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.min.js"></script>
+    <!-- Include webAR.rocks THREE.js library -->
+    <script src="https://cdn.jsdelivr.net/gh/webAR-rocks/webAR.rocks.three/dist/webAR.rocks.three.min.js"></script>
     
     <script>
-        // Main Application
-        document.addEventListener('DOMContentLoaded', async () => {
-            // DOM Elements
-            const loader = document.querySelector('.loader');
-            const loaderText = document.getElementById('loader-text');
-            const errorPanel = document.querySelector('.error-panel');
-            const errorTitle = document.getElementById('error-title');
-            const errorMessage = document.getElementById('error-message');
-            const retryBtn = document.getElementById('retry-btn');
-            const switchARBtn = document.getElementById('switch-ar-btn');
-            const resetBtn = document.getElementById('reset-btn');
-            const placementUI = document.getElementById('placement-ui');
-            const modelSelector = document.getElementById('model-selector');
-            const modelButtons = document.querySelectorAll('.model-btn');
-            
-            // AR View Containers
-            const webARView = document.getElementById('webar-view');
-            const arjsView = document.getElementById('arjs-view');
-            const aframeView = document.getElementById('aframe-view');
-            
-            // WebAR.rocks Elements
-            const webARCanvas = document.getElementById('webar-canvas');
-            const webARMarker = document.getElementById('webar-marker');
-            
-            // Application State
-            let currentARMode = 'webar'; // webar, arjs, aframe
-            let selectedModel = 'box';
-            let isContentPlaced = false;
-            let arSession = null;
-            
-            // Models configuration
-            const models = {
-                box: null, // Simple primitive
-                duck: 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Duck/glTF/Duck.gltf',
-                helmet: 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf'
-            };
-            
-            // WebAR.rocks SLAM Components
-            let webARScene = null;
-            let webARCamera = null;
-            let webARRenderer = null;
-            let webARContent = null;
-            let webARSlam = null;
-            let webARHitPosition = null;
-            
-            // AR.js Components
-            let arjsScene = null;
-            let arjsCamera = null;
-            let arjsRenderer = null;
-            let arjsControls = null;
-            let arjsContent = null;
-            
-            // A-Frame Components
-            let aframeScene = null;
-            
-            // GLTF Loader
-            const gltfLoader = new THREE.GLTFLoader();
-            
-            // Device Detection
-            const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-                              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-            
-            const isAndroid = () => /Android/.test(navigator.userAgent);
-            
-            const getIOSVersion = () => {
-                if (!isIOS()) return 0;
-                const v = (navigator.appVersion).match(/OS (\d+)_(\d+)_?(\d+)?/);
-                return v ? parseInt(v[1], 10) : 0;
-            };
-            
-            // Error Handling
-            function showError(title, message) {
-                errorTitle.textContent = title;
-                errorMessage.textContent = message;
-                errorPanel.style.display = 'flex';
-                loader.style.display = 'none';
-                console.error(`${title}: ${message}`);
+        // Main variables
+        let scene, camera, renderer, hitTestPlane, model;
+        let arSession = null;
+        let modelPlaced = false;
+        
+        // Initialize the AR experience
+        async function init() {
+            // Check for WebXR support
+            if (!navigator.xr) {
+                document.getElementById('info').textContent = 
+                    'WebXR not supported in your browser. Try Chrome or Safari on iOS 12+ or Android 8+.';
+                document.getElementById('loading').style.display = 'none';
+                return;
             }
             
-            function hideError() {
-                errorPanel.style.display = 'none';
-            }
+            // Initialize Three.js scene
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
             
-            // AR Mode Switching
-            async function switchARMode() {
-                try {
-                    loader.style.display = 'flex';
-                    loaderText.textContent = `Switching to ${currentARMode} mode...`;
-                    
-                    // Clean up current AR session
-                    if (arSession) {
-                        await arSession.destroy();
-                        arSession = null;
-                    }
-                    
-                    // Hide all views
-                    webARView.style.display = 'none';
-                    arjsView.style.display = 'none';
-                    aframeView.style.display = 'none';
-                    
-                    // Initialize selected AR mode
-                    switch(currentARMode) {
-                        case 'webar':
-                            await initWebAR();
-                            break;
-                        case 'arjs':
-                            await initARjs();
-                            break;
-                        case 'aframe':
-                            await initAframe();
-                            break;
-                    }
-                    
-                    loader.style.display = 'none';
-                } catch (error) {
-                    showError("Mode Switch Failed", `Failed to switch to ${currentARMode} mode: ${error.message}`);
-                }
-            }
+            // Initialize renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            document.body.appendChild(renderer.domElement);
             
-            // WebAR.rocks SLAM Initialization
-            async function initWebAR() {
-                try {
-                    webARView.style.display = 'block';
-                    placementUI.style.display = 'block';
-                    modelSelector.style.display = 'flex';
-                    isContentPlaced = false;
-                    
-                    // Initialize Three.js scene
-                    webARScene = new THREE.Scene();
-                    webARCamera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-                    
-                    // Initialize renderer with performance optimizations
-                    webARRenderer = new THREE.WebGLRenderer({
-                        canvas: webARCanvas,
-                        alpha: true,
-                        antialias: false,
-                        powerPreference: isIOS() ? 'default' : 'low-power'
-                    });
-                    webARRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-                    webARRenderer.setSize(window.innerWidth, window.innerHeight);
-                    webARRenderer.autoClear = false;
-                    
-                    // Create content container
-                    webARContent = new THREE.Group();
-                    webARScene.add(webARContent);
-                    
-                    // Lighting
-                    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-                    webARScene.add(ambientLight);
-                    
-                    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-                    directionalLight.position.set(0, 1, 0);
-                    webARScene.add(directionalLight);
-                    
-                    // Initialize WebAR.rocks SLAM
-                    const slamOptions = {
-                        renderer: webARRenderer,
-                        scene: webARScene,
-                        camera: webARCamera,
-                        videoElement: webARCanvas,
-                        poseMode: isIOS() && getIOSVersion() < 13 ? 'slam_without_video' : 'slam',
-                        maxDetectionRate: isIOS() ? 10 : 15,
-                        canvasWidth: Math.min(window.innerWidth, 1024),
-                        canvasHeight: Math.min(window.innerHeight, 1024),
-                        onReady: () => {
-                            console.log('WebAR.rocks SLAM ready');
-                            loader.style.display = 'none';
-                        },
-                        onError: (error) => {
-                            console.error('WebAR.rocks error:', error);
-                            showError("SLAM Error", "Failed to initialize tracking. Try better lighting.");
-                        }
-                    };
-                    
-                    webARSlam = new WEBARROCKS_THREE.WebARCamera(slamOptions);
-                    
-                    // Animation loop
-                    function animate() {
-                        requestAnimationFrame(animate);
-                        
-                        if (webARSlam && webARSlam.isReady) {
-                            webARSlam.update();
-                            
-                            // Surface detection
-                            if (!isContentPlaced && webARSlam.get('poseReady')) {
-                                const hitTest = webARSlam.hitTest(0.5, 0.5); // Screen center
-                                
-                                if (hitTest && hitTest.length > 0) {
-                                    webARHitPosition = hitTest[0].position;
-                                    const screenPos = webARSlam.project(webARHitPosition);
-                                    webARMarker.style.display = 'block';
-                                    webARMarker.style.left = `${screenPos.x * 100}%`;
-                                    webARMarker.style.top = `${screenPos.y * 100}%`;
-                                } else {
-                                    webARMarker.style.display = 'none';
-                                    webARHitPosition = null;
-                                }
-                            }
-                            
-                            webARRenderer.render(webARScene, webARCamera);
-                        }
-                    }
-                    
-                    animate();
-                    
-                    // Handle window resize
-                    window.addEventListener('resize', () => {
-                        if (webARSlam) webARSlam.resize();
-                        if (webARRenderer) {
-                            webARRenderer.setSize(window.innerWidth, window.innerHeight);
-                            webARCamera.aspect = window.innerWidth / window.innerHeight;
-                            webARCamera.updateProjectionMatrix();
-                        }
-                    });
-                    
-                    return true;
-                } catch (error) {
-                    console.error('WebAR.rocks init failed:', error);
-                    return false;
-                }
-            }
+            // Initialize webAR.rocks
+            const webARThree = new webAR.rocks.three({
+                renderer: renderer,
+                scene: scene,
+                camera: camera,
+                onSessionStarted: onSessionStarted,
+                onSessionEnded: onSessionEnded,
+                onHitTest: onHitTest
+            });
             
-            // AR.js Initialization
-            async function initARjs() {
-                try {
-                    arjsView.style.display = 'block';
-                    placementUI.style.display = 'none';
-                    modelSelector.style.display = 'none';
-                    
-                    // AR.js uses A-Frame internally, so we'll set up a simple scene
-                    arjsView.innerHTML = `
-                        <a-scene embedded arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;">
-                            <a-camera gps-camera rotation-reader></a-camera>
-                            <a-entity id="arjs-content"></a-entity>
-                        </a-scene>
-                    `;
-                    
-                    // Wait for scene to load
-                    await new Promise(resolve => {
-                        const scene = arjsView.querySelector('a-scene');
-                        scene.addEventListener('loaded', resolve);
-                    });
-                    
-                    aframeScene = arjsView.querySelector('a-scene');
-                    arjsContent = arjsView.querySelector('#arjs-content');
-                    
-                    // For AR.js, we'll use GPS-style placement (simplified for demo)
-                    placeARjsContent();
-                    
-                    loader.style.display = 'none';
-                    return true;
-                } catch (error) {
-                    console.error('AR.js init failed:', error);
-                    return false;
-                }
-            }
-            
-            // A-Frame Initialization
-            async function initAframe() {
-                try {
-                    aframeView.style.display = 'block';
-                    placementUI.style.display = 'none';
-                    modelSelector.style.display = 'none';
-                    
-                    // Set up A-Frame scene with AR capabilities
-                    aframeView.innerHTML = `
-                        <a-scene embedded arjs="sourceType: webcam; trackingMethod: best;">
-                            <a-camera></a-camera>
-                            <a-entity id="aframe-content"></a-entity>
-                        </a-scene>
-                    `;
-                    
-                    // Wait for scene to load
-                    await new Promise(resolve => {
-                        const scene = aframeView.querySelector('a-scene');
-                        scene.addEventListener('loaded', resolve);
-                    });
-                    
-                    aframeScene = aframeView.querySelector('a-scene');
-                    arjsContent = aframeView.querySelector('#aframe-content');
-                    
-                    // For A-Frame, we'll use markerless AR
-                    placeAframeContent();
-                    
-                    loader.style.display = 'none';
-                    return true;
-                } catch (error) {
-                    console.error('A-Frame init failed:', error);
-                    return false;
-                }
-            }
-            
-            // Content Placement Functions
-            function placeWebARContent(position) {
-                if (!position) return;
+            // Load 3D model (replace with your GLB model URL)
+            const loader = new THREE.GLTFLoader();
+            try {
+                const gltf = await loader.loadAsync('all.glb');
+                model = gltf.scene;
+                model.scale.set(0.5, 0.5, 0.5);
+                model.visible = false;
+                scene.add(model);
                 
-                // Clear previous content
-                while (webARContent.children.length > 0) {
-                    const child = webARContent.children[0];
-                    cleanUpObject(child);
-                    webARContent.remove(child);
+                document.getElementById('loading').style.display = 'none';
+                
+                // Start AR session after model is loaded
+                webARThree.start();
+            } catch (error) {
+                console.error('Error loading model:', error);
+                document.getElementById('info').textContent = 'Error loading 3D model.';
+                document.getElementById('loading').style.display = 'none';
+            }
+            
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize);
+            
+            // Handle tap to place model
+            window.addEventListener('click', () => {
+                if (!modelPlaced && hitTestPlane) {
+                    placeModel(hitTestPlane.position, hitTestPlane.quaternion);
+                }
+            });
+        }
+        
+        function onSessionStarted(session) {
+            arSession = session;
+            document.getElementById('info').textContent = 'Move your device to detect surfaces. Tap to place the 3D model.';
+        }
+        
+        function onSessionEnded() {
+            arSession = null;
+            modelPlaced = false;
+            if (model) model.visible = false;
+            document.getElementById('info').textContent = 'AR session ended. Reload to try again.';
+        }
+        
+        function onHitTest(hitPose) {
+            if (!modelPlaced) {
+                if (!hitTestPlane) {
+                    // Create a visualization for where the model will be placed
+                    hitTestPlane = new THREE.Mesh(
+                        new THREE.PlaneGeometry(0.3, 0.3),
+                        new THREE.MeshBasicMaterial({ 
+                            color: 0xffffff, 
+                            transparent: true, 
+                            opacity: 0.5,
+                            side: THREE.DoubleSide
+                        })
+                    );
+                    hitTestPlane.rotation.x = -Math.PI / 2;
+                    scene.add(hitTestPlane);
                 }
                 
-                isContentPlaced = true;
-                webARMarker.style.display = 'none';
-                placementUI.style.display = 'none';
-                
-                if (selectedModel === 'box') {
-                    // Simple box
-                    const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-                    const material = new THREE.MeshStandardMaterial({ 
-                        color: 0x4CAF50,
-                        roughness: 0.7,
-                        metalness: 0.3
-                    });
-                    const cube = new THREE.Mesh(geometry, material);
-                    cube.position.copy(position);
-                    webARContent.add(cube);
-                    
-                    // Simple animation
-                    function animate() {
-                        requestAnimationFrame(animate);
-                        cube.rotation.y += 0.01;
-                    }
-                    animate();
-                } else {
-                    // Load GLTF model
-                    loadGLTFModel(models[selectedModel], position, (model) => {
-                        model.scale.set(0.5, 0.5, 0.5);
-                        webARContent.add(model);
-                        
-                        // Simple animation
-                        function animate() {
-                            requestAnimationFrame(animate);
-                            model.rotation.y += 0.005;
-                        }
-                        animate();
-                    });
-                }
-            }
-            
-            function placeARjsContent() {
-                // AR.js typically uses markers or GPS, but we'll simulate placement
-                const modelUrl = selectedModel === 'box' ? null : models[selectedModel];
-                
-                if (modelUrl) {
-                    arjsContent.setAttribute('gltf-model', `url(${modelUrl})`);
-                    arjsContent.setAttribute('scale', '0.5 0.5 0.5');
-                    arjsContent.setAttribute('position', '0 0 -1');
-                    arjsContent.setAttribute('animation', 'property: rotation; to: 0 360 0; loop: true; dur: 10000');
-                } else {
-                    arjsContent.setAttribute('geometry', 'primitive: box');
-                    arjsContent.setAttribute('material', 'color: #4CAF50');
-                    arjsContent.setAttribute('scale', '0.2 0.2 0.2');
-                    arjsContent.setAttribute('position', '0 0 -1');
-                    arjsContent.setAttribute('animation', 'property: rotation; to: 0 360 0; loop: true; dur: 5000');
-                }
-            }
-            
-            function placeAframeContent() {
-                // A-Frame placement similar to AR.js
-                const modelUrl = selectedModel === 'box' ? null : models[selectedModel];
-                
-                if (modelUrl) {
-                    arjsContent.setAttribute('gltf-model', `url(${modelUrl})`);
-                    arjsContent.setAttribute('scale', '0.5 0.5 0.5');
-                    arjsContent.setAttribute('position', '0 0 -1.5');
-                    arjsContent.setAttribute('animation', 'property: rotation; to: 0 360 0; loop: true; dur: 10000');
-                } else {
-                    arjsContent.setAttribute('geometry', 'primitive: box');
-                    arjsContent.setAttribute('material', 'color: #4CAF50');
-                    arjsContent.setAttribute('scale', '0.2 0.2 0.2');
-                    arjsContent.setAttribute('position', '0 0 -1.5');
-                    arjsContent.setAttribute('animation', 'property: rotation; to: 0 360 0; loop: true; dur: 5000');
-                }
-            }
-            
-            // Helper Functions
-            function loadGLTFModel(url, position, callback) {
-                if (!url) {
-                    // Fallback to simple box
-                    const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-                    const material = new THREE.MeshStandardMaterial({ color: 0x4CAF50 });
-                    const cube = new THREE.Mesh(geometry, material);
-                    cube.position.copy(position);
-                    callback(cube);
-                    return;
-                }
-                
-                gltfLoader.load(url, 
-                    (gltf) => {
-                        const model = gltf.scene || gltf.scenes[0];
-                        model.position.copy(position);
-                        callback(model);
-                    },
-                    undefined,
-                    (error) => {
-                        console.error('GLTF loading error:', error);
-                        // Fallback to box
-                        const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-                        const material = new THREE.MeshStandardMaterial({ color: 0x4CAF50 });
-                        const cube = new THREE.Mesh(geometry, material);
-                        cube.position.copy(position);
-                        callback(cube);
-                    }
+                // Update hit test plane position
+                hitTestPlane.position.set(
+                    hitPose.position.x,
+                    hitPose.position.y,
+                    hitPose.position.z
                 );
+                hitTestPlane.quaternion.set(
+                    hitPose.quaternion.x,
+                    hitPose.quaternion.y,
+                    hitPose.quaternion.z,
+                    hitPose.quaternion.w
+                );
+                hitTestPlane.visible = true;
             }
-            
-            function cleanUpObject(object) {
-                if (object.geometry) object.geometry.dispose();
-                if (object.material) {
-                    if (Array.isArray(object.material)) {
-                        object.material.forEach(m => m.dispose());
-                    } else {
-                        object.material.dispose();
-                    }
-                }
-                if (object.children) {
-                    object.children.forEach(child => cleanUpObject(child));
-                }
-            }
-            
-            function resetScene() {
-                isContentPlaced = false;
+        }
+        
+        function placeModel(position, quaternion) {
+            if (model) {
+                model.position.copy(position);
+                model.quaternion.copy(quaternion);
+                model.visible = true;
+                modelPlaced = true;
                 
-                switch(currentARMode) {
-                    case 'webar':
-                        placementUI.style.display = 'block';
-                        while (webARContent.children.length > 0) {
-                            const child = webARContent.children[0];
-                            cleanUpObject(child);
-                            webARContent.remove(child);
-                        }
-                        break;
-                    case 'arjs':
-                    case 'aframe':
-                        if (arjsContent) {
-                            arjsContent.removeAttribute('gltf-model');
-                            arjsContent.removeAttribute('geometry');
-                            arjsContent.removeAttribute('material');
-                            arjsContent.removeAttribute('animation');
-                            arjsContent.setAttribute('position', '0 0 0');
-                        }
-                        break;
+                if (hitTestPlane) {
+                    scene.remove(hitTestPlane);
+                    hitTestPlane = null;
                 }
+                
+                document.getElementById('info').style.display = 'none';
             }
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
             
-            // Event Listeners
-            retryBtn.addEventListener('click', startAR);
-            switchARBtn.addEventListener('click', () => {
-                // Cycle through AR modes
-                currentARMode = currentARMode === 'webar' ? 'arjs' : 
-                               currentARMode === 'arjs' ? 'aframe' : 'webar';
-                switchARBtn.textContent = `Switch to ${currentARMode === 'webar' ? 'AR.js' : 
-                                         currentARMode === 'arjs' ? 'A-Frame' : 'WebAR'} Mode`;
-                switchARMode();
-            });
-            
-            resetBtn.addEventListener('click', resetScene);
-            
-            modelButtons.forEach(btn => {
-                btn.addEventListener('click', () => {
-                    selectedModel = btn.dataset.model;
-                    resetScene();
-                    
-                    // Preload model if not box
-                    if (selectedModel !== 'box') {
-                        loadGLTFModel(models[selectedModel], new THREE.Vector3(0, -100, 0), () => {
-                            console.log(`Preloaded ${selectedModel} model`);
-                        });
-                    }
-                });
-            });
-            
-            // Tap to place (for WebAR mode)
-            document.addEventListener('click', (e) => {
-                if (currentARMode === 'webar' && !isContentPlaced && webARHitPosition) {
-                    placeWebARContent(webARHitPosition.clone());
-                }
-            });
-            
-            // Start AR Experience
-            async function startAR() {
-                try {
-                    loader.style.display = 'flex';
-                    loaderText.textContent = "Checking AR capabilities...";
-                    hideError();
-                    
-                    // Check camera permissions
-                    const stream = await navigator.mediaDevices.getUserMedia({ 
-                        video: { 
-                            facingMode: 'environment',
-                            width: { ideal: 1280 },
-                            height: { ideal: 720 }
-                        } 
-                    });
-                    
-                    // Stop stream (WebAR.rocks will start its own)
-                    stream.getTracks().forEach(track => track.stop());
-                    
-                    // Determine best AR mode based on device capabilities
-                    if (typeof WEBARROCKS_THREE !== 'undefined' && WEBARROCKS_THREE.isWebARCameraAvailable()) {
-                        currentARMode = 'webar';
-                    } else if (isIOS() || isAndroid()) {
-                        currentARMode = 'arjs';
-                    } else {
-                        currentARMode = 'aframe';
-                    }
-                    
-                    switchARBtn.textContent = `Switch to ${currentARMode === 'webar' ? 'AR.js' : 
-                                            currentARMode === 'arjs' ? 'A-Frame' : 'WebAR'} Mode`;
-                    
-                    // Initialize selected AR mode
-                    await switchARMode();
-                    
-                    // Preload models
-                    Object.entries(models).forEach(([key, url]) => {
-                        if (url) {
-                            loadGLTFModel(url, new THREE.Vector3(0, -100, 0), () => {
-                                console.log(`Preloaded ${key} model`);
-                            });
-                        }
-                    });
-                    
-                } catch (error) {
-                    if (error.name === 'NotAllowedError') {
-                        showError("Permission Denied", "Camera access is required for AR. Please allow camera permissions.");
-                    } else if (error.name === 'NotFoundError') {
-                        showError("Camera Not Found", "No camera available for AR experience.");
-                    } else {
-                        showError("AR Initialization Failed", error.message || "Unknown error occurred");
-                    }
-                }
+            if (renderer.xr.isPresenting) {
+                renderer.render(scene, camera);
             }
-            
-            // Start the application
-            startAR();
-        });
+        }
+        
+        // Start the application
+        init();
+        animate();
     </script>
 </body>
 </html>
