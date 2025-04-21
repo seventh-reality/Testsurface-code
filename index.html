@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-  <title>WebAR World Tracking</title>
+  <title>Stable WebAR World Tracking</title>
   <style>
     body {
       margin: 0;
@@ -27,12 +27,14 @@
       text-align: center;
       color: white;
       font-family: Arial, sans-serif;
-      background-color: rgba(0,0,0,0.5);
-      padding: 10px;
+      background-color: rgba(0,0,0,0.7);
+      padding: 15px;
       margin: 0 auto;
-      width: 80%;
-      border-radius: 20px;
+      width: 90%;
+      border-radius: 25px;
       pointer-events: none;
+      font-size: 16px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
     }
     .loading-container {
       position: absolute;
@@ -50,8 +52,8 @@
       text-align: center;
     }
     .loading-spinner {
-      border: 5px solid #f3f3f3;
-      border-top: 5px solid #3498db;
+      border: 5px solid rgba(243, 243, 243, 0.3);
+      border-top: 5px solid #4CAF50;
       border-radius: 50%;
       width: 50px;
       height: 50px;
@@ -64,12 +66,17 @@
     }
     #permission-button {
       margin-top: 20px;
-      padding: 10px 20px;
+      padding: 12px 24px;
       background-color: #3498db;
       color: white;
       border: none;
-      border-radius: 5px;
+      border-radius: 8px;
       cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.3s;
+    }
+    #permission-button:hover {
+      background-color: #2980b9;
     }
     #start-button {
       margin-top: 20px;
@@ -77,14 +84,38 @@
       background-color: #4CAF50;
       color: white;
       border: none;
-      border-radius: 5px;
+      border-radius: 8px;
       font-size: 18px;
       cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    #start-button:hover {
+      background-color: #3e8e41;
     }
     #unsupported-message {
       display: none;
-      max-width: 80%;
+      max-width: 90%;
       margin: 20px auto;
+      padding: 20px;
+      background-color: rgba(0,0,0,0.7);
+      border-radius: 15px;
+    }
+    #stability-indicator {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      width: 100px;
+      height: 10px;
+      background-color: rgba(255,255,255,0.2);
+      border-radius: 5px;
+      overflow: hidden;
+      display: none;
+    }
+    #stability-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #f44336, #4CAF50);
+      transition: width 0.5s;
     }
   </style>
 </head>
@@ -99,13 +130,16 @@
       <p>Your device or browser doesn't support WebXR with AR features. Try using:</p>
       <ul>
         <li>Latest Chrome or Firefox on Android</li>
-        <li>Safari on iOS 12+ (limited support)</li>
+        <li>Safari on iOS 13+</li>
         <li>Make sure you're accessing this page over HTTPS</li>
       </ul>
     </div>
   </div>
+  <div id="stability-indicator">
+    <div id="stability-bar"></div>
+  </div>
   <canvas id="renderCanvas"></canvas>
-  <div id="ar-prompt">Look around to detect surfaces. Tap to place objects.</div>
+  <div id="ar-prompt">Move your device slowly to detect surfaces. Tap to place objects.</div>
 
   <!-- Three.js library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -115,173 +149,397 @@
 
   <!-- Main app code -->
   <script>
-    // Global variables
+    // Enhanced WebAR with stable surface tracking
     let scene, camera, renderer, xrSession, hitTestSource, refSpace;
     let controller, controllerGrip;
-    let reticle, objectPlacementMode = false;
-    let placedObjects = [];
-    const startScale = new THREE.Vector3(0.01, 0.01, 0.01);
-    const endScale = new THREE.Vector3(1, 1, 1);
-    const animationMillis = 750;
+    let reticle, placedObjects = [];
+    let stabilityScore = 0;
+    let lastHitPose = null;
+    let hitPoseHistory = [];
+    const HISTORY_SIZE = 10;
+    
+    // Configuration
+    const config = {
+      reticleColor: 0x00ff00,
+      reticleScale: 0.2,
+      minStabilityToPlace: 0.8,
+      modelScale: 0.5,
+      animationDuration: 1000,
+      stabilitySmoothing: 0.2
+    };
 
-    // Initialize the scene
+    // Initialize the scene with enhanced settings
     function initScene() {
-      // Create scene
+      // Create scene with fog for depth perception
       scene = new THREE.Scene();
-      scene.background = null; // Transparent background for AR
+      scene.background = null;
+      scene.fog = new THREE.FogExp2(0x000000, 0.01);
 
-      // Create camera
-      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+      // Create camera with optimized settings
+      camera = new THREE.PerspectiveCamera(
+        60, // Wider field of view
+        window.innerWidth / window.innerHeight,
+        0.05, // Closer near plane
+        100 // Farther far plane
+      );
 
-      // Create renderer
+      // Enhanced renderer configuration
       renderer = new THREE.WebGLRenderer({
         canvas: document.getElementById('renderCanvas'),
         antialias: true,
-        alpha: true
+        alpha: true,
+        powerPreference: "high-performance"
       });
       renderer.setPixelRatio(window.devicePixelRatio);
       renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.xr.enabled = true;
 
-      // Add lights
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-      directionalLight.position.set(1, 1, 1);
+      // Improved lighting setup
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+      directionalLight.position.set(0.5, 1, 0.5);
+      directionalLight.castShadow = true;
+      directionalLight.shadow.mapSize.width = 1024;
+      directionalLight.shadow.mapSize.height = 1024;
+      directionalLight.shadow.camera.near = 0.1;
+      directionalLight.shadow.camera.far = 50;
       scene.add(directionalLight);
 
-      const ambientLight = new THREE.AmbientLight(0x404040, 5);
+      const ambientLight = new THREE.AmbientLight(0x404040, 2);
       scene.add(ambientLight);
 
-      // Create reticle for placement
-      reticle = new THREE.Mesh(
-        new THREE.RingBufferGeometry(0.05, 0.1, 32).rotateX(-Math.PI / 2),
-        new THREE.MeshBasicMaterial({ color: 0xffffff })
-      );
-      reticle.matrixAutoUpdate = false;
-      reticle.visible = false;
-      scene.add(reticle);
-
-      // Handle window resize
-      window.addEventListener('resize', onWindowResize);
+      // Enhanced reticle with better visibility
+      createReticle();
+      
+      // Handle window resize with debounce
+      let resizeTimeout;
+      window.addEventListener('resize', () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(onWindowResize, 200);
+      });
     }
 
-    // Setup AR
+    // Create a more visible reticle with animation
+    function createReticle() {
+      const ringGeometry = new THREE.RingBufferGeometry(
+        0.05 * config.reticleScale, 
+        0.1 * config.reticleScale, 
+        32
+      ).rotateX(-Math.PI / 2);
+      
+      const dotGeometry = new THREE.CircleBufferGeometry(
+        0.02 * config.reticleScale, 
+        16
+      ).rotateX(-Math.PI / 2);
+      
+      const reticleGroup = new THREE.Group();
+      
+      // Outer ring
+      const outerRing = new THREE.Mesh(
+        ringGeometry,
+        new THREE.MeshBasicMaterial({ 
+          color: config.reticleColor,
+          transparent: true,
+          opacity: 0.8
+        })
+      );
+      reticleGroup.add(outerRing);
+      
+      // Inner dot
+      const innerDot = new THREE.Mesh(
+        dotGeometry,
+        new THREE.MeshBasicMaterial({ 
+          color: config.reticleColor,
+          transparent: true,
+          opacity: 0.6
+        })
+      );
+      reticleGroup.add(innerDot);
+      
+      // Pulsing animation
+      const pulseRing = outerRing.clone();
+      pulseRing.material = outerRing.material.clone();
+      pulseRing.material.opacity = 0.3;
+      pulseRing.scale.set(0.5, 0.5, 0.5);
+      reticleGroup.add(pulseRing);
+      
+      // Animate the pulse ring
+      function animateReticle() {
+        if (!reticleGroup.visible) return;
+        
+        TWEEN.update();
+        
+        new TWEEN.Tween(pulseRing.scale)
+          .to({ x: 1.5, y: 1.5, z: 1.5 }, 1500)
+          .easing(TWEEN.Easing.Quadratic.Out)
+          .onComplete(() => {
+            pulseRing.scale.set(0.5, 0.5, 0.5);
+            animateReticle();
+          })
+          .start();
+          
+        new TWEEN.Tween(pulseRing.material)
+          .to({ opacity: 0 }, 1500)
+          .easing(TWEEN.Easing.Quadratic.Out)
+          .start();
+      }
+      
+      reticleGroup.matrixAutoUpdate = false;
+      reticleGroup.visible = false;
+      reticle = reticleGroup;
+      scene.add(reticle);
+      
+      // Start animation when reticle becomes visible
+      const observer = new MutationObserver(() => {
+        if (reticleGroup.visible) {
+          animateReticle();
+        }
+      });
+      observer.observe(reticleGroup, { attributes: true });
+    }
+
+    // Setup AR with enhanced stability checks
     async function setupAR() {
       document.getElementById('loading-text').textContent = 'Initializing AR...';
+      document.getElementById('stability-indicator').style.display = 'block';
 
-      // Check if WebXR is available
       if (!navigator.xr) {
         showUnsupportedMessage();
         return;
       }
 
-      // Request AR session
       try {
-        const sessionInit = { optionalFeatures: ['hit-test', 'dom-overlay'] };
-        xrSession = await navigator.xr.requestSession('immersive-ar', sessionInit);
+        const sessionInit = { 
+          optionalFeatures: [
+            'hit-test', 
+            'dom-overlay',
+            'light-estimation',
+            'anchors'
+          ] 
+        };
         
-        // Set up session event handlers
+        xrSession = await navigator.xr.requestSession('immersive-ar', sessionInit);
         xrSession.addEventListener('end', onSessionEnd);
         
-        // Set up Three.js WebXR manager
         renderer.xr.setReferenceSpaceType('local');
         renderer.xr.setSession(xrSession);
         
-        // Create reference space
-        refSpace = await xrSession.requestReferenceSpace('local');
+        // Use 'local-floor' for better stability on horizontal surfaces
+        refSpace = await xrSession.requestReferenceSpace('local-floor');
         
-        // Create hit test source
         const viewerSpace = await xrSession.requestReferenceSpace('viewer');
-        hitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
+        hitTestSource = await xrSession.requestHitTestSource({ 
+          space: viewerSpace,
+          entityTypes: ['plane', 'estimated-plane']
+        });
         
-        // Set up controller
         setupController();
-        
-        // Start animation loop
         renderer.setAnimationLoop(onXRFrame);
         
-        // Hide loading screen
         document.getElementById('loading').style.display = 'none';
+        updatePrompt("Move slowly to detect surfaces. Tap to place objects when reticle is green.");
       } catch (error) {
         console.error('AR session failed:', error);
-        document.getElementById('loading-text').textContent = 'Failed to start AR: ' + error.message;
+        updatePrompt('Failed to start AR: ' + error.message);
         document.getElementById('permission-button').style.display = 'block';
       }
     }
 
-    // Set up XR controller
     function setupController() {
-      // Add controller
       controller = renderer.xr.getController(0);
       controller.addEventListener('select', onSelect);
       scene.add(controller);
 
-      // Add controller grip (visual representation)
       const controllerModelFactory = new XRControllerModelFactory();
       controllerGrip = renderer.xr.getControllerGrip(0);
       controllerGrip.add(controllerModelFactory.createControllerModel(controllerGrip));
       scene.add(controllerGrip);
     }
 
-    // XR Frame loop
+    // Enhanced XR frame loop with stability tracking
     function onXRFrame(time, frame) {
       if (!xrSession) return;
 
-      // Get the pose of the device
       const pose = frame.getViewerPose(refSpace);
       if (!pose) return;
 
-      // Perform hit test
+      // Update stability indicator based on device motion
+      updateStabilityIndicator(pose);
+
       const hitTestResults = frame.getHitTestResults(hitTestSource);
       if (hitTestResults.length > 0) {
         const hit = hitTestResults[0];
-        const hitMatrix = new THREE.Matrix4().fromArray(hit.getPose(refSpace).transform.matrix);
+        const hitPose = hit.getPose(refSpace);
         
-        // Position reticle at hit point
-        reticle.visible = true;
-        reticle.matrix.fromArray(hit.getPose(refSpace).transform.matrix);
+        // Store hit pose for stability calculation
+        hitPoseHistory.push(hitPose);
+        if (hitPoseHistory.length > HISTORY_SIZE) {
+          hitPoseHistory.shift();
+        }
+        
+        // Calculate stability based on hit pose consistency
+        calculateStability();
+        
+        // Update reticle position and appearance based on stability
+        if (stabilityScore > config.minStabilityToPlace) {
+          reticle.matrix.fromArray(hitPose.transform.matrix);
+          reticle.visible = true;
+          reticle.children.forEach(child => {
+            child.material.color.setHex(0x00ff00); // Green when stable
+          });
+        } else {
+          reticle.matrix.fromArray(hitPose.transform.matrix);
+          reticle.visible = true;
+          reticle.children.forEach(child => {
+            child.material.color.setHex(0xff9900); // Orange when unstable
+          });
+        }
+        
+        lastHitPose = hitPose;
       } else {
         reticle.visible = false;
+        stabilityScore = 0;
+        updateStabilityBar();
       }
 
-      // Render the scene
       renderer.render(scene, camera);
     }
 
-    // Handle controller select event (placing objects)
-    function onSelect() {
-      if (reticle.visible) {
-        placeObject(reticle.matrix);
+    // Calculate tracking stability based on hit pose history
+    function calculateStability() {
+      if (hitPoseHistory.length < 2) {
+        stabilityScore = 0;
+        return;
+      }
+      
+      // Calculate position variance
+      let positionVariance = 0;
+      const positions = hitPoseHistory.map(pose => {
+        const p = pose.transform.position;
+        return new THREE.Vector3(p.x, p.y, p.z);
+      });
+      
+      const avgPosition = new THREE.Vector3();
+      positions.forEach(p => avgPosition.add(p));
+      avgPosition.divideScalar(positions.length);
+      
+      positions.forEach(p => {
+        positionVariance += p.distanceToSquared(avgPosition);
+      });
+      positionVariance /= positions.length;
+      
+      // Normalize stability score (0-1)
+      const maxVariance = 0.01; // Empirical value
+      stabilityScore = 1 - Math.min(positionVariance / maxVariance, 1);
+      
+      // Apply smoothing
+      stabilityScore = stabilityScore * config.stabilitySmoothing + 
+                      (1 - config.stabilitySmoothing) * stabilityScore;
+      
+      updateStabilityBar();
+    }
+
+    function updateStabilityBar() {
+      const stabilityBar = document.getElementById('stability-bar');
+      const percentage = Math.floor(stabilityScore * 100);
+      stabilityBar.style.width = `${percentage}%`;
+      
+      // Change color based on stability
+      if (percentage > 80) {
+        stabilityBar.style.background = 'linear-gradient(90deg, #4CAF50, #2E7D32)';
+      } else if (percentage > 50) {
+        stabilityBar.style.background = 'linear-gradient(90deg, #FFC107, #FF9800)';
+      } else {
+        stabilityBar.style.background = 'linear-gradient(90deg, #F44336, #D32F2F)';
       }
     }
 
-    // Place an object at the given position
-    function placeObject(matrix) {
-      // Load a simple cube as a placeholder (you can replace with any 3D model)
-      const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
-      const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
-      const cube = new THREE.Mesh(geometry, material);
+    function updateStabilityIndicator(pose) {
+      // Simple stability indicator based on device motion
+      const angularVelocity = pose.angularVelocity || { x: 0, y: 0, z: 0 };
+      const linearVelocity = pose.linearVelocity || { x: 0, y: 0, z: 0 };
       
-      // Set position from matrix
-      cube.matrixAutoUpdate = false;
-      cube.matrix.copy(matrix);
+      const motionAmount = Math.sqrt(
+        angularVelocity.x * angularVelocity.x +
+        angularVelocity.y * angularVelocity.y +
+        angularVelocity.z * angularVelocity.z +
+        linearVelocity.x * linearVelocity.x +
+        linearVelocity.y * linearVelocity.y +
+        linearVelocity.z * linearVelocity.z
+      );
       
-      // Animate the object in
-      const scale = { x: startScale.x, y: startScale.y, z: startScale.z };
-      cube.scale.set(scale.x, scale.y, scale.z);
+      // Update stability score based on motion
+      const motionStability = 1 - Math.min(motionAmount * 5, 1); // Scale factor
+      stabilityScore = stabilityScore * 0.7 + motionStability * 0.3;
+    }
+
+    // Enhanced object placement with stability check
+    function onSelect() {
+      if (!reticle.visible || stabilityScore < config.minStabilityToPlace) {
+        updatePrompt("Tracking not stable enough. Move slower for better surface detection.");
+        return;
+      }
       
-      new TWEEN.Tween(scale)
-        .to({ x: endScale.x, y: endScale.y, z: endScale.z }, animationMillis)
+      if (lastHitPose) {
+        placeObject(lastHitPose.transform.matrix);
+      }
+    }
+
+    // Improved object placement with physics-like stability
+    function placeObject(matrixArray) {
+      // Create a more complex object for demonstration
+      const group = new THREE.Group();
+      group.matrixAutoUpdate = false;
+      group.matrix.fromArray(matrixArray);
+      
+      // Create a base plate for better visual stability
+      const baseGeometry = new THREE.CylinderBufferGeometry(0.15, 0.15, 0.02, 32);
+      const baseMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0x333333,
+        roughness: 0.7,
+        metalness: 0.3
+      });
+      const base = new THREE.Mesh(baseGeometry, baseMaterial);
+      base.position.y = 0.01; // Slightly above surface
+      base.receiveShadow = true;
+      base.castShadow = true;
+      group.add(base);
+      
+      // Create the main object
+      const boxGeometry = new THREE.BoxBufferGeometry(0.1, 0.2, 0.1);
+      const boxMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0x4CAF50,
+        roughness: 0.4,
+        metalness: 0.6
+      });
+      const box = new THREE.Mesh(boxGeometry, boxMaterial);
+      box.position.y = 0.12; // On top of base
+      box.castShadow = true;
+      group.add(box);
+      
+      // Initial scale for animation
+      group.scale.set(0.01, 0.01, 0.01);
+      
+      // Animate the object in with physics-like motion
+      new TWEEN.Tween(group.scale)
+        .to({ x: config.modelScale, y: config.modelScale, z: config.modelScale }, config.animationDuration)
         .easing(TWEEN.Easing.Elastic.Out)
         .onUpdate(() => {
-          cube.scale.set(scale.x, scale.y, scale.z);
+          // Add slight bounce effect
+          if (group.scale.y > config.modelScale * 0.9) {
+            group.scale.x = config.modelScale * (1 + Math.sin(Date.now() * 0.01) * 0.05);
+            group.scale.z = config.modelScale * (1 + Math.sin(Date.now() * 0.01) * 0.05);
+          }
         })
         .start();
       
-      scene.add(cube);
-      placedObjects.push(cube);
+      scene.add(group);
+      placedObjects.push(group);
+      
+      updatePrompt("Object placed! Tap to place another.");
     }
 
-    // Handle session end
     function onSessionEnd() {
       if (renderer.xr.getSession()) {
         renderer.xr.getSession().removeEventListener('end', onSessionEnd);
@@ -291,32 +549,34 @@
       xrSession = null;
       hitTestSource = null;
       refSpace = null;
+      stabilityScore = 0;
+      hitPoseHistory = [];
       
-      // Show loading screen again
       document.getElementById('loading').style.display = 'flex';
       document.getElementById('loading-text').textContent = 'AR session ended. Ready to start again.';
       document.getElementById('start-button').style.display = 'block';
+      document.getElementById('stability-indicator').style.display = 'none';
       
-      // Clean up scene
       placedObjects.forEach(obj => scene.remove(obj));
       placedObjects = [];
     }
 
-    // Window resize handler
     function onWindowResize() {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
-    // Show unsupported message
+    function updatePrompt(message) {
+      document.getElementById('ar-prompt').textContent = message;
+    }
+
     function showUnsupportedMessage() {
       document.getElementById('loading-text').style.display = 'none';
       document.getElementById('loading-spinner').style.display = 'none';
       document.getElementById('unsupported-message').style.display = 'block';
     }
 
-    // Check for WebXR support
     async function checkXRSupport() {
       document.getElementById('loading-text').textContent = 'Checking AR support...';
       
@@ -328,7 +588,7 @@
       try {
         const supported = await navigator.xr.isSessionSupported('immersive-ar');
         if (supported) {
-          document.getElementById('loading-text').textContent = 'AR supported!';
+          updatePrompt('AR supported!');
           document.getElementById('start-button').style.display = 'block';
           return true;
         } else {
@@ -342,7 +602,6 @@
       }
     }
 
-    // Request camera permission
     async function requestCameraPermission() {
       document.getElementById('permission-button').style.display = 'none';
       document.getElementById('loading-text').textContent = 'Requesting camera access...';
@@ -363,15 +622,12 @@
     window.addEventListener('load', async () => {
       initScene();
       
-      // Check for WebXR support
       const supported = await checkXRSupport();
       
       if (supported) {
-        // Set up event listeners
         document.getElementById('start-button').addEventListener('click', setupAR);
         document.getElementById('permission-button').addEventListener('click', requestCameraPermission);
         
-        // Try to access camera to check permissions
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ video: true });
           stream.getTracks().forEach(track => track.stop());
