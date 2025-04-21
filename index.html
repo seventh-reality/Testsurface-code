@@ -11,13 +11,13 @@
       overflow: hidden;
       background-color: #000;
     }
-    #camerafeed {
+    #renderCanvas {
       position: absolute;
       left: 0;
       top: 0;
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      display: block;
     }
     #ar-prompt {
       position: absolute;
@@ -41,10 +41,13 @@
       width: 100%;
       height: 100%;
       display: flex;
+      flex-direction: column;
       justify-content: center;
       align-items: center;
       background-color: #000;
       z-index: 1000;
+      color: white;
+      text-align: center;
     }
     .loading-spinner {
       border: 5px solid #f3f3f3;
@@ -53,228 +56,334 @@
       width: 50px;
       height: 50px;
       animation: spin 1s linear infinite;
+      margin-bottom: 20px;
     }
     @keyframes spin {
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
+    }
+    #permission-button {
+      margin-top: 20px;
+      padding: 10px 20px;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    #start-button {
+      margin-top: 20px;
+      padding: 15px 30px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      font-size: 18px;
+      cursor: pointer;
+    }
+    #unsupported-message {
+      display: none;
+      max-width: 80%;
+      margin: 20px auto;
     }
   </style>
 </head>
 <body>
   <div id="loading" class="loading-container">
     <div class="loading-spinner"></div>
+    <div id="loading-text">Checking AR Support...</div>
+    <button id="permission-button" style="display:none;">Allow Camera Access</button>
+    <button id="start-button" style="display:none;">Start AR Experience</button>
+    <div id="unsupported-message" style="display:none;">
+      <h2>AR Not Supported</h2>
+      <p>Your device or browser doesn't support WebXR with AR features. Try using:</p>
+      <ul>
+        <li>Latest Chrome or Firefox on Android</li>
+        <li>Safari on iOS 12+ (limited support)</li>
+        <li>Make sure you're accessing this page over HTTPS</li>
+      </ul>
+    </div>
   </div>
-  <canvas id="camerafeed"></canvas>
-  <div id="ar-prompt">Tap to place objects. Pinch with two fingers to reposition.</div>
-  
-  <!-- 8th Wall and Three.js libraries -->
-  <script src="https://cdn.8thwall.com/web/xrweb/xrweb.js"></script>
-  <script src="https://cdn.8thwall.com/web/xrextras/xrextras.js"></script>
+  <canvas id="renderCanvas"></canvas>
+  <div id="ar-prompt">Look around to detect surfaces. Tap to place objects.</div>
+
+  <!-- Three.js library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/XRControllerModelFactory.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
-  
+
   <!-- Main app code -->
   <script>
-// Copyright (c) 2021 8th Wall, Inc.
+    // Global variables
+    let scene, camera, renderer, xrSession, hitTestSource, refSpace;
+    let controller, controllerGrip;
+    let reticle, objectPlacementMode = false;
+    let placedObjects = [];
+    const startScale = new THREE.Vector3(0.01, 0.01, 0.01);
+    const endScale = new THREE.Vector3(1, 1, 1);
+    const animationMillis = 750;
 
-// Returns a pipeline module that initializes the threejs scene when the camera feed starts, and
-// handles subsequent spawning of a glb model whenever the scene is tapped.
+    // Initialize the scene
+    function initScene() {
+      // Create scene
+      scene = new THREE.Scene();
+      scene.background = null; // Transparent background for AR
 
-/* globals XR8 XRExtras THREE TWEEN */
+      // Create camera
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
 
-const placegroundScenePipelineModule = () => {
-  const modelFile = 'all.glb' // Your 3D model file
-  const startScale = new THREE.Vector3(0.01, 0.01, 0.01)  // Initial scale value for our model
-  const endScale = new THREE.Vector3(1, 1, 1)             // Ending scale value for our model
-  const animationMillis = 750                             // Animate over 0.75 seconds
+      // Create renderer
+      renderer = new THREE.WebGLRenderer({
+        canvas: document.getElementById('renderCanvas'),
+        antialias: true,
+        alpha: true
+      });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
 
-  const raycaster = new THREE.Raycaster()
-  const tapPosition = new THREE.Vector2()
-  const loader = new THREE.GLTFLoader()
+      // Add lights
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+      directionalLight.position.set(1, 1, 1);
+      scene.add(directionalLight);
 
-  let surface  // Transparent surface for raycasting for object placement.
+      const ambientLight = new THREE.AmbientLight(0x404040, 5);
+      scene.add(ambientLight);
 
-  // Populates some object into an XR scene and sets the initial camera position.
-  const initXrScene = ({scene, camera, renderer}) => {
-    renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+      // Create reticle for placement
+      reticle = new THREE.Mesh(
+        new THREE.RingBufferGeometry(0.05, 0.1, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xffffff })
+      );
+      reticle.matrixAutoUpdate = false;
+      reticle.visible = false;
+      scene.add(reticle);
 
-    const light = new THREE.DirectionalLight(0xffffff, 1, 100)
-    light.position.set(1, 4.3, 2.5)
-
-    scene.add(light)
-    scene.add(new THREE.AmbientLight(0x404040, 5))
-
-    light.shadow.mapSize.width = 1024
-    light.shadow.mapSize.height = 1024
-    light.shadow.camera.near = 0.5
-    light.shadow.camera.far = 500
-    light.castShadow = true
-
-    surface = new THREE.Mesh(
-      new THREE.PlaneGeometry(100, 100, 1, 1),
-      new THREE.ShadowMaterial({
-        opacity: 0.5,
-      })
-    )
-
-    surface.rotateX(-Math.PI / 2)
-    surface.position.set(0, 0, 0)
-    surface.receiveShadow = true
-    scene.add(surface)
-
-    camera.position.set(0, 3, 0)
-  }
-
-  const animateIn = (model, pointX, pointZ, yDegrees) => {
-    const scale = {...startScale}
-
-    model.scene.rotation.set(0.0, yDegrees, 0.0)
-    model.scene.position.set(pointX, 0.0, pointZ)
-    model.scene.scale.set(scale.x, scale.y, scale.z)
-    
-    // Enable shadows if model has mesh components
-    model.scene.traverse((child) => {
-      if (child.isMesh) {
-        child.castShadow = true
-      }
-    })
-    
-    XR8.Threejs.xrScene().scene.add(model.scene)
-
-    new TWEEN.Tween(scale)
-      .to(endScale, animationMillis)
-      .easing(TWEEN.Easing.Elastic.Out)
-      .onUpdate(() => {
-        model.scene.scale.set(scale.x, scale.y, scale.z)
-      })
-      .start()
-  }
-
-  // Load the glb model at the requested point on the surface.
-  const placeObject = (pointX, pointZ) => {
-    loader.load(
-      modelFile,
-      (gltf) => {
-        animateIn(gltf, pointX, pointZ, Math.random() * 360)
-      },
-      undefined,
-      (error) => {
-        console.error('Error loading model:', error)
-      }
-    )
-  }
-
-  const placeObjectTouchHandler = (e) => {
-    // Recenter when canvas is tapped with two fingers
-    if (e.touches.length === 2) {
-      XR8.XrController.recenter()
-      return
+      // Handle window resize
+      window.addEventListener('resize', onWindowResize);
     }
 
-    if (e.touches.length > 2) {
-      return
-    }
+    // Setup AR
+    async function setupAR() {
+      document.getElementById('loading-text').textContent = 'Initializing AR...';
 
-    // Single tap - place object
-    const {camera} = XR8.Threejs.xrScene()
-
-    tapPosition.x = (e.touches[0].clientX / window.innerWidth) * 2 - 1
-    tapPosition.y = -(e.touches[0].clientY / window.innerHeight) * 2 + 1
-
-    raycaster.setFromCamera(tapPosition, camera)
-    const intersects = raycaster.intersectObject(surface)
-
-    if (intersects.length === 1 && intersects[0].object === surface) {
-      placeObject(intersects[0].point.x, intersects[0].point.z)
-    }
-  }
-
-  return {
-    name: 'placeground',
-
-    onStart: ({canvas}) => {
-      const {scene, camera, renderer} = XR8.Threejs.xrScene()
-
-      initXrScene({scene, camera, renderer})
-      canvas.addEventListener('touchstart', placeObjectTouchHandler, true)
-
-      // Prevent scroll/pinch gestures on canvas
-      canvas.addEventListener('touchmove', (event) => {
-        event.preventDefault()
-      })
-
-      // Enable TWEEN animations
-      const animate = (time) => {
-        requestAnimationFrame(animate)
-        TWEEN.update(time)
+      // Check if WebXR is available
+      if (!navigator.xr) {
+        showUnsupportedMessage();
+        return;
       }
-      animate()
 
-      XR8.XrController.updateCameraProjectionMatrix({
-        origin: camera.position,
-        facing: camera.quaternion,
-      })
+      // Request AR session
+      try {
+        const sessionInit = { optionalFeatures: ['hit-test', 'dom-overlay'] };
+        xrSession = await navigator.xr.requestSession('immersive-ar', sessionInit);
+        
+        // Set up session event handlers
+        xrSession.addEventListener('end', onSessionEnd);
+        
+        // Set up Three.js WebXR manager
+        renderer.xr.setReferenceSpaceType('local');
+        renderer.xr.setSession(xrSession);
+        
+        // Create reference space
+        refSpace = await xrSession.requestReferenceSpace('local');
+        
+        // Create hit test source
+        const viewerSpace = await xrSession.requestReferenceSpace('viewer');
+        hitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
+        
+        // Set up controller
+        setupController();
+        
+        // Start animation loop
+        renderer.setAnimationLoop(onXRFrame);
+        
+        // Hide loading screen
+        document.getElementById('loading').style.display = 'none';
+      } catch (error) {
+        console.error('AR session failed:', error);
+        document.getElementById('loading-text').textContent = 'Failed to start AR: ' + error.message;
+        document.getElementById('permission-button').style.display = 'block';
+      }
+    }
+
+    // Set up XR controller
+    function setupController() {
+      // Add controller
+      controller = renderer.xr.getController(0);
+      controller.addEventListener('select', onSelect);
+      scene.add(controller);
+
+      // Add controller grip (visual representation)
+      const controllerModelFactory = new XRControllerModelFactory();
+      controllerGrip = renderer.xr.getControllerGrip(0);
+      controllerGrip.add(controllerModelFactory.createControllerModel(controllerGrip));
+      scene.add(controllerGrip);
+    }
+
+    // XR Frame loop
+    function onXRFrame(time, frame) {
+      if (!xrSession) return;
+
+      // Get the pose of the device
+      const pose = frame.getViewerPose(refSpace);
+      if (!pose) return;
+
+      // Perform hit test
+      const hitTestResults = frame.getHitTestResults(hitTestSource);
+      if (hitTestResults.length > 0) {
+        const hit = hitTestResults[0];
+        const hitMatrix = new THREE.Matrix4().fromArray(hit.getPose(refSpace).transform.matrix);
+        
+        // Position reticle at hit point
+        reticle.visible = true;
+        reticle.matrix.fromArray(hit.getPose(refSpace).transform.matrix);
+      } else {
+        reticle.visible = false;
+      }
+
+      // Render the scene
+      renderer.render(scene, camera);
+    }
+
+    // Handle controller select event (placing objects)
+    function onSelect() {
+      if (reticle.visible) {
+        placeObject(reticle.matrix);
+      }
+    }
+
+    // Place an object at the given position
+    function placeObject(matrix) {
+      // Load a simple cube as a placeholder (you can replace with any 3D model)
+      const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+      const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+      const cube = new THREE.Mesh(geometry, material);
       
-      // Hide loading screen when AR starts
-      document.getElementById('loading').style.display = 'none';
-    },
-  }
-}
+      // Set position from matrix
+      cube.matrixAutoUpdate = false;
+      cube.matrix.copy(matrix);
+      
+      // Animate the object in
+      const scale = { x: startScale.x, y: startScale.y, z: startScale.z };
+      cube.scale.set(scale.x, scale.y, scale.z);
+      
+      new TWEEN.Tween(scale)
+        .to({ x: endScale.x, y: endScale.y, z: endScale.z }, animationMillis)
+        .easing(TWEEN.Easing.Elastic.Out)
+        .onUpdate(() => {
+          cube.scale.set(scale.x, scale.y, scale.z);
+        })
+        .start();
+      
+      scene.add(cube);
+      placedObjects.push(cube);
+    }
 
-const onxrloaded = () => {
-  XR8.addCameraPipelineModules([
-    // Add camera pipeline modules.
-    XR8.GlTextureRenderer.pipelineModule(),      // Draws the camera feed.
-    XR8.Threejs.pipelineModule(),                // Creates a ThreeJS AR Scene.
-    XR8.XrController.pipelineModule(),           // Enables SLAM tracking.
-    XRExtras.AlmostThere.pipelineModule(),       // Detects unsupported browsers and gives hints.
-    XRExtras.FullWindowCanvas.pipelineModule(),  // Modifies the canvas to fill the window.
-    XRExtras.Loading.pipelineModule(),           // Manages the loading screen on startup.
-    XRExtras.RuntimeError.pipelineModule(),      // Shows an error image on runtime error.
-    // Custom pipeline modules.
-    placegroundScenePipelineModule(),
-  ])
+    // Handle session end
+    function onSessionEnd() {
+      if (renderer.xr.getSession()) {
+        renderer.xr.getSession().removeEventListener('end', onSessionEnd);
+      }
+      
+      renderer.setAnimationLoop(null);
+      xrSession = null;
+      hitTestSource = null;
+      refSpace = null;
+      
+      // Show loading screen again
+      document.getElementById('loading').style.display = 'flex';
+      document.getElementById('loading-text').textContent = 'AR session ended. Ready to start again.';
+      document.getElementById('start-button').style.display = 'block';
+      
+      // Clean up scene
+      placedObjects.forEach(obj => scene.remove(obj));
+      placedObjects = [];
+    }
 
-  // Open the camera and start running the camera run loop.
-  XR8.run({
-    canvas: document.getElementById('camerafeed'),
-    ownRunLoop: true,
-    cameraConfig: { direction: XR8.XrConfig.camera().BACK }
-  }).then(() => {
-    console.log('XR8 running successfully');
-  }).catch((err) => {
-    console.error('Error starting XR8:', err);
-    document.getElementById('loading').innerHTML = '<p style="color:white">Failed to start camera. Please check permissions and try again.</p>';
-  });
-}
+    // Window resize handler
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
 
-// Show loading screen before the full XR library has been loaded.
-const load = () => { 
-  if (window.XRExtras) {
-    XRExtras.Loading.showLoading({onxrloaded});
-  } else {
-    document.getElementById('loading').innerHTML = '<p style="color:white">Loading AR libraries...</p>';
-    window.addEventListener('xrextrasloaded', () => {
-      XRExtras.Loading.showLoading({onxrloaded});
+    // Show unsupported message
+    function showUnsupportedMessage() {
+      document.getElementById('loading-text').style.display = 'none';
+      document.getElementById('loading-spinner').style.display = 'none';
+      document.getElementById('unsupported-message').style.display = 'block';
+    }
+
+    // Check for WebXR support
+    async function checkXRSupport() {
+      document.getElementById('loading-text').textContent = 'Checking AR support...';
+      
+      if (!navigator.xr) {
+        showUnsupportedMessage();
+        return false;
+      }
+      
+      try {
+        const supported = await navigator.xr.isSessionSupported('immersive-ar');
+        if (supported) {
+          document.getElementById('loading-text').textContent = 'AR supported!';
+          document.getElementById('start-button').style.display = 'block';
+          return true;
+        } else {
+          showUnsupportedMessage();
+          return false;
+        }
+      } catch (error) {
+        console.error('Error checking XR support:', error);
+        showUnsupportedMessage();
+        return false;
+      }
+    }
+
+    // Request camera permission
+    async function requestCameraPermission() {
+      document.getElementById('permission-button').style.display = 'none';
+      document.getElementById('loading-text').textContent = 'Requesting camera access...';
+      
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(track => track.stop());
+        document.getElementById('loading-text').textContent = 'Camera access granted. Ready to start AR.';
+        document.getElementById('start-button').style.display = 'block';
+      } catch (error) {
+        console.error('Camera permission denied:', error);
+        document.getElementById('loading-text').textContent = 'Camera access denied. Please enable camera permissions.';
+        document.getElementById('permission-button').style.display = 'block';
+      }
+    }
+
+    // Initialize everything when the page loads
+    window.addEventListener('load', async () => {
+      initScene();
+      
+      // Check for WebXR support
+      const supported = await checkXRSupport();
+      
+      if (supported) {
+        // Set up event listeners
+        document.getElementById('start-button').addEventListener('click', setupAR);
+        document.getElementById('permission-button').addEventListener('click', requestCameraPermission);
+        
+        // Try to access camera to check permissions
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          stream.getTracks().forEach(track => track.stop());
+          document.getElementById('loading-text').textContent = 'Ready to start AR experience.';
+          document.getElementById('start-button').style.display = 'block';
+        } catch (error) {
+          console.log('Camera permission not granted yet:', error);
+          document.getElementById('loading-text').textContent = 'Camera access required for AR.';
+          document.getElementById('permission-button').style.display = 'block';
+        }
+      }
     });
-  }
-}
-
-// Check if device is mobile
-const isMobile = () => {
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-}
-
-// Only load AR if on mobile device
-window.onload = () => {
-  if (isMobile()) {
-    load();
-  } else {
-    document.getElementById('loading').innerHTML = '<p style="color:white">Please open this page on a mobile device to experience AR.</p>';
-  }
-}
   </script>
 </body>
 </html>
