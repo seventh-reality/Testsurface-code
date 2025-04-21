@@ -34,9 +34,36 @@
       border-radius: 20px;
       pointer-events: none;
     }
+    .loading-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background-color: #000;
+      z-index: 1000;
+    }
+    .loading-spinner {
+      border: 5px solid #f3f3f3;
+      border-top: 5px solid #3498db;
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body>
+  <div id="loading" class="loading-container">
+    <div class="loading-spinner"></div>
+  </div>
   <canvas id="camerafeed"></canvas>
   <div id="ar-prompt">Tap to place objects. Pinch with two fingers to reposition.</div>
   
@@ -57,7 +84,7 @@
 /* globals XR8 XRExtras THREE TWEEN */
 
 const placegroundScenePipelineModule = () => {
-  const modelFile = 'all.glb' // Free 3D model from 8th Wall samples
+  const modelFile = 'all.glb' // Your 3D model file
   const startScale = new THREE.Vector3(0.01, 0.01, 0.01)  // Initial scale value for our model
   const endScale = new THREE.Vector3(1, 1, 1)             // Ending scale value for our model
   const animationMillis = 750                             // Animate over 0.75 seconds
@@ -189,28 +216,65 @@ const placegroundScenePipelineModule = () => {
         origin: camera.position,
         facing: camera.quaternion,
       })
+      
+      // Hide loading screen when AR starts
+      document.getElementById('loading').style.display = 'none';
     },
   }
 }
 
 const onxrloaded = () => {
   XR8.addCameraPipelineModules([
-    XR8.GlTextureRenderer.pipelineModule(),      // Draws the camera feed
-    XR8.Threejs.pipelineModule(),               // Creates a ThreeJS AR Scene
-    XR8.XrController.pipelineModule(),          // Enables SLAM tracking
-    XRExtras.AlmostThere.pipelineModule(),      // Detects unsupported browsers
-    XRExtras.FullWindowCanvas.pipelineModule(), // Modifies the canvas to fill the window
-    XRExtras.Loading.pipelineModule(),          // Manages the loading screen
-    XRExtras.RuntimeError.pipelineModule(),     // Shows an error image on error
-    placegroundScenePipelineModule(),           // Our custom module
+    // Add camera pipeline modules.
+    XR8.GlTextureRenderer.pipelineModule(),      // Draws the camera feed.
+    XR8.Threejs.pipelineModule(),                // Creates a ThreeJS AR Scene.
+    XR8.XrController.pipelineModule(),           // Enables SLAM tracking.
+    XRExtras.AlmostThere.pipelineModule(),       // Detects unsupported browsers and gives hints.
+    XRExtras.FullWindowCanvas.pipelineModule(),  // Modifies the canvas to fill the window.
+    XRExtras.Loading.pipelineModule(),           // Manages the loading screen on startup.
+    XRExtras.RuntimeError.pipelineModule(),      // Shows an error image on runtime error.
+    // Custom pipeline modules.
+    placegroundScenePipelineModule(),
   ])
 
-  XR8.run({canvas: document.getElementById('camerafeed')})
+  // Open the camera and start running the camera run loop.
+  XR8.run({
+    canvas: document.getElementById('camerafeed'),
+    ownRunLoop: true,
+    cameraConfig: { direction: XR8.XrConfig.camera().BACK }
+  }).then(() => {
+    console.log('XR8 running successfully');
+  }).catch((err) => {
+    console.error('Error starting XR8:', err);
+    document.getElementById('loading').innerHTML = '<p style="color:white">Failed to start camera. Please check permissions and try again.</p>';
+  });
 }
 
 // Show loading screen before the full XR library has been loaded.
-const load = () => { XRExtras.Loading.showLoading({onxrloaded}) }
-window.onload = () => { window.XRExtras ? load() : window.addEventListener('xrextrasloaded', load) }
+const load = () => { 
+  if (window.XRExtras) {
+    XRExtras.Loading.showLoading({onxrloaded});
+  } else {
+    document.getElementById('loading').innerHTML = '<p style="color:white">Loading AR libraries...</p>';
+    window.addEventListener('xrextrasloaded', () => {
+      XRExtras.Loading.showLoading({onxrloaded});
+    });
+  }
+}
+
+// Check if device is mobile
+const isMobile = () => {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
+// Only load AR if on mobile device
+window.onload = () => {
+  if (isMobile()) {
+    load();
+  } else {
+    document.getElementById('loading').innerHTML = '<p style="color:white">Please open this page on a mobile device to experience AR.</p>';
+  }
+}
   </script>
 </body>
 </html>
